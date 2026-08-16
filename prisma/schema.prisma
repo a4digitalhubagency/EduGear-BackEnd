@@ -1,0 +1,483 @@
+// EduGear — multi-tenant school management SaaS
+// PRIMARY RULE: every school-owned table carries `schoolId`. Tenant filtering is
+// enforced at runtime by the Prisma tenant-guard extension (src/database/tenant-guard.extension.ts).
+// The column layout below is deliberately RLS-ready: a future `USING (school_id = current_setting(...))`
+// policy can be layered on without a schema change.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Neon: DATABASE_URL is the pooled connection, DIRECT_URL the direct one used by migrations.
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum SchoolStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum TermName {
+  FIRST
+  SECOND
+  THIRD
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  GRADUATED
+  TRANSFERRED
+  WITHDRAWN
+}
+
+enum GuardianRelationship {
+  FATHER
+  MOTHER
+  GUARDIAN
+  GRANDPARENT
+  SIBLING
+  UNCLE
+  AUNT
+  OTHER
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  INVITATION
+}
+
+// ---------------------------------------------------------------------------
+// Tenant root
+// ---------------------------------------------------------------------------
+
+/// The tenant. Everything school-owned hangs off this row.
+model School {
+  id          String       @id @default(uuid()) @db.Uuid
+  /// Public, human-friendly tenant handle (used in URLs/subdomains later).
+  slug        String       @unique
+  name        String
+  shortName   String?
+  email       String
+  phone       String?
+  addressLine String?
+  city        String?
+  state       String?
+  country     String       @default("NG")
+  logoUrl     String?
+  motto       String?
+  status      SchoolStatus @default(PENDING)
+  timezone    String       @default("Africa/Lagos")
+  currency    String       @default("NGN")
+  /// Soft-delete marker; tenant data is never hard-deleted on cancellation.
+  deletedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  roles            Role[]
+  memberships      Membership[]
+  academicSessions AcademicSession[]
+  terms            Term[]
+  classes          Class[]
+  classArms        ClassArm[]
+  students         Student[]
+  guardians        Guardian[]
+  studentGuardians StudentGuardian[]
+  auditLogs        AuditLog[]
+
+  @@index([status])
+  @@map("schools")
+}
+
+// ---------------------------------------------------------------------------
+// Identity, access control
+// ---------------------------------------------------------------------------
+
+/// Global identity. A user is NOT owned by a school — school access is granted
+/// through Membership, so one person can belong to several schools.
+model User {
+  id                  String     @id @default(uuid()) @db.Uuid
+  email               String     @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  avatarUrl           String?
+  status              UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt     DateTime?
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime?
+  /// Bumped on password change / logout-all to invalidate outstanding tokens.
+  tokenVersion        Int        @default(0)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  memberships        Membership[]
+  refreshTokens      RefreshToken[]
+  verificationTokens VerificationToken[]
+  invitesSent        Membership[]        @relation("MembershipInvitedBy")
+  auditLogs          AuditLog[]
+  guardianProfiles   Guardian[]
+
+  @@index([status])
+  @@map("users")
+}
+
+/// A role is school-owned: the six system roles are copied into every school at
+/// provisioning, which lets a school customise permissions later (Phase 5)
+/// without touching other tenants.
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  schoolId    String   @db.Uuid
+  name        String
+  slug        String
+  description String?
+  /// System roles cannot be deleted or renamed.
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school      School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  permissions RolePermission[]
+  memberships Membership[]
+
+  @@unique([schoolId, slug])
+  @@index([schoolId])
+  @@map("roles")
+}
+
+/// Global catalogue of permission keys, e.g. `students.read`. Seeded, not tenant-owned.
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  group       String
+  description String
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@index([group])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String   @db.Uuid
+  permissionId String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// Links a user to a school with exactly one role. This is the tenant membership
+/// record — the server derives the active tenant from it, never from the client.
+model Membership {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @db.Uuid
+  schoolId    String           @db.Uuid
+  roleId      String           @db.Uuid
+  status      MembershipStatus @default(INVITED)
+  /// School-issued staff number, unique per school when present.
+  staffId     String?
+  /// The membership a multi-school user lands on at login.
+  isDefault   Boolean          @default(false)
+  invitedById String?          @db.Uuid
+  invitedAt   DateTime?
+  acceptedAt  DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  school    School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  role      Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  invitedBy User?          @relation("MembershipInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  sessions  RefreshToken[]
+  auditLogs AuditLog[]
+
+  @@unique([userId, schoolId])
+  @@unique([schoolId, staffId])
+  @@index([schoolId, status])
+  @@index([userId])
+  @@index([roleId])
+  @@map("memberships")
+}
+
+/// Hashed refresh tokens (no Redis in the MVP stack). Rotation + reuse detection
+/// works off `familyId`: replaying a revoked token kills the whole family.
+model RefreshToken {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @db.Uuid
+  membershipId      String?   @db.Uuid
+  /// SHA-256 of the opaque token; the raw value is never stored.
+  tokenHash         String    @unique
+  familyId          String    @db.Uuid
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?   @db.Uuid
+  createdByIp       String?
+  userAgent         String?
+  createdAt         DateTime  @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership Membership? @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// Single-use, hashed tokens for email verification, password reset and invitations.
+model VerificationToken {
+  id         String                @id @default(uuid()) @db.Uuid
+  userId     String                @db.Uuid
+  type       VerificationTokenType
+  tokenHash  String                @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  metadata   Json?
+  createdAt  DateTime              @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Academic structure (schema only in Phase 0 — modules land in Phase 1)
+// ---------------------------------------------------------------------------
+
+model AcademicSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  /// e.g. "2025/2026"
+  name      String
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  terms  Term[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId, isCurrent])
+  @@map("academic_sessions")
+}
+
+model Term {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  sessionId String   @db.Uuid
+  name      TermName
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, name])
+  @@index([schoolId, isCurrent])
+  @@map("terms")
+}
+
+/// A class level, e.g. JSS 1. `level` drives promotion ordering.
+model Class {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  level     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  arms   ClassArm[]
+
+  @@unique([schoolId, name])
+  @@unique([schoolId, level])
+  @@index([schoolId])
+  @@map("classes")
+}
+
+/// A stream within a class, e.g. JSS 1 A.
+model ClassArm {
+  id            String   @id @default(uuid()) @db.Uuid
+  schoolId      String   @db.Uuid
+  classId       String   @db.Uuid
+  name          String
+  capacity      Int?
+  /// Form teacher, referenced by membership so the link breaks if staff leave.
+  formTeacherId String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class    Class     @relation(fields: [classId], references: [id], onDelete: Cascade)
+  students Student[]
+
+  @@unique([classId, name])
+  @@index([schoolId])
+  @@map("class_arms")
+}
+
+// ---------------------------------------------------------------------------
+// Students and guardians (schema only in Phase 0 — modules land in Phase 1)
+// ---------------------------------------------------------------------------
+
+model Student {
+  id            String        @id @default(uuid()) @db.Uuid
+  schoolId      String        @db.Uuid
+  /// Admission number — unique per school, NOT globally.
+  studentId     String
+  firstName     String
+  lastName      String
+  middleName    String?
+  gender        Gender
+  dateOfBirth   DateTime?     @db.Date
+  email         String?
+  phone         String?
+  addressLine   String?
+  photoUrl      String?
+  admissionDate DateTime      @db.Date
+  status        StudentStatus @default(ACTIVE)
+  classArmId    String?       @db.Uuid
+  bloodGroup    String?
+  genotype      String?
+  stateOfOrigin String?
+  lga           String?
+  nationality   String        @default("Nigerian")
+  religion      String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  school   School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
+  guardians StudentGuardian[]
+
+  @@unique([schoolId, studentId])
+  @@index([schoolId, status])
+  @@index([schoolId, classArmId])
+  @@index([schoolId, lastName, firstName])
+  @@map("students")
+}
+
+model Guardian {
+  id          String   @id @default(uuid()) @db.Uuid
+  schoolId    String   @db.Uuid
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String
+  altPhone    String?
+  addressLine String?
+  occupation  String?
+  /// Set once the guardian claims a parent-portal login (Phase 4).
+  userId      String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school   School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user     User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  students StudentGuardian[]
+
+  // NULL emails stay non-conflicting in Postgres, so guardians without email are fine.
+  @@unique([schoolId, email])
+  @@index([schoolId, phone])
+  @@index([schoolId, lastName])
+  @@map("guardians")
+}
+
+model StudentGuardian {
+  studentId    String               @db.Uuid
+  guardianId   String               @db.Uuid
+  /// Denormalised so the tenant guard can scope the join table directly.
+  schoolId     String               @db.Uuid
+  relationship GuardianRelationship
+  isPrimary    Boolean              @default(false)
+  canPickUp    Boolean              @default(true)
+  createdAt    DateTime             @default(now())
+
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  guardian Guardian @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, guardianId])
+  @@index([schoolId])
+  @@index([guardianId])
+  @@map("student_guardians")
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+/// `schoolId` is nullable because some security events (failed login for an
+/// unknown email) happen before a tenant is resolved. Reads are always scoped.
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  schoolId     String?  @db.Uuid
+  actorUserId  String?  @db.Uuid
+  membershipId String?  @db.Uuid
+  action       String
+  entityType   String?
+  entityId     String?
+  description  String?
+  /// Never store secrets, tokens or password material here.
+  metadata     Json?
+  ipAddress    String?
+  userAgent    String?
+  requestId    String?
+  createdAt    DateTime @default(now())
+
+  school     School?     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  actor      User?       @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  membership Membership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, createdAt])
+  @@index([schoolId, entityType, entityId])
+  @@index([schoolId, action])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
