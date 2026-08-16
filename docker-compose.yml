@@ -1,0 +1,28 @@
+# Local development infrastructure only.
+# Production Postgres is Neon; this exists so developers and CI have a real database.
+# Redis is deliberately absent — the MVP has no Redis dependency. When one is
+# introduced (multi-instance rate limiting / queues), add the service here.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: edugear-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: edugear
+      POSTGRES_PASSWORD: edugear
+      POSTGRES_DB: edugear
+    ports:
+      # Non-default host port to avoid clashing with other local Postgres instances.
+      - '55432:5432'
+    volumes:
+      - edugear_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U edugear -d edugear']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  edugear_pgdata:
