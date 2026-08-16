@@ -1,0 +1,120 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+
+/**
+ * Identity resolved from a verified access token. The server builds this from the
+ * token's membership id — a client-supplied tenant id is never trusted.
+ */
+export interface AuthContext {
+  userId: string;
+  membershipId: string;
+  schoolId: string;
+  roleId: string;
+  roleSlug: string;
+  email: string;
+}
+
+export interface RequestContextStore {
+  requestId: string;
+  ip?: string;
+  userAgent?: string;
+  /** Null until the auth guard has verified a token. Mutated in place. */
+  auth: AuthContext | null;
+  /**
+   * When true the tenant guard stops injecting `schoolId`. Only ever set by
+   * `runAsSystem`, which exists for login (user lookup by email), tenant
+   * provisioning, seeds and background jobs.
+   */
+  systemScope: boolean;
+}
+
+const storage = new AsyncLocalStorage<RequestContextStore>();
+
+/**
+ * Prisma promises are lazy: nothing runs until something calls `.then()`. If a
+ * callback merely *returns* a query, the query would execute in whatever context
+ * awaited it — outside the scope we just opened. Subscribing here forces
+ * execution to begin inside the active store.
+ */
+function startInContext<T>(result: T): T {
+  const isThenable =
+    result !== null &&
+    (typeof result === 'object' || typeof result === 'function') &&
+    typeof (result as { then?: unknown }).then === 'function';
+
+  return isThenable ? (Promise.resolve(result) as T) : result;
+}
+
+export class TenantContextMissingError extends Error {
+  constructor(model: string, operation: string) {
+    super(
+      `Refusing to run ${model}.${operation} without tenant context. ` +
+        `Tenant-scoped queries must run inside a request, RequestContext.runWithTenant(), ` +
+        `or an explicit RequestContext.runAsSystem() block.`,
+    );
+    this.name = 'TenantContextMissingError';
+  }
+}
+
+export const RequestContext = {
+  /** Wraps a request (or job) so everything downstream shares one context. */
+  run<T>(seed: Partial<RequestContextStore>, fn: () => T): T {
+    const store: RequestContextStore = {
+      requestId: seed.requestId ?? randomUUID(),
+      ip: seed.ip,
+      userAgent: seed.userAgent,
+      auth: seed.auth ?? null,
+      systemScope: seed.systemScope ?? false,
+    };
+    return storage.run(store, () => startInContext(fn()));
+  },
+
+  /** Runs `fn` scoped to a tenant. For jobs, seeds and tests — not request handling. */
+  runWithTenant<T>(auth: AuthContext, fn: () => T): T {
+    return RequestContext.run({ auth }, fn);
+  },
+
+  /**
+   * Escape hatch: disables tenant filtering for the duration of `fn`.
+   * Deliberately verbose so `grep runAsSystem` lists every unscoped code path.
+   */
+  runAsSystem<T>(fn: () => T): T {
+    const current = storage.getStore();
+    if (current) {
+      // Preserve request id / actor for audit logging while lifting the filter.
+      return storage.run({ ...current, systemScope: true }, () =>
+        startInContext(fn()),
+      );
+    }
+    return RequestContext.run({ systemScope: true }, fn);
+  },
+
+  get(): RequestContextStore | undefined {
+    return storage.getStore();
+  },
+
+  getRequestId(): string | undefined {
+    return storage.getStore()?.requestId;
+  },
+
+  getAuth(): AuthContext | null {
+    return storage.getStore()?.auth ?? null;
+  },
+
+  /** The active tenant, or null when unauthenticated / in system scope. */
+  getTenantId(): string | null {
+    return storage.getStore()?.auth?.schoolId ?? null;
+  },
+
+  isSystemScope(): boolean {
+    return storage.getStore()?.systemScope ?? false;
+  },
+
+  /** Called by the JWT strategy once a token has been verified. */
+  setAuth(auth: AuthContext): void {
+    const store = storage.getStore();
+    if (store) {
+      store.auth = auth;
+    }
+  },
+};
