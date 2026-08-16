@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  verify:
+    name: Lint, typecheck and test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: edugear
+          POSTGRES_PASSWORD: edugear
+          POSTGRES_DB: edugear_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U edugear"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://edugear:edugear@localhost:5432/edugear_test?schema=public
+      DIRECT_URL: postgresql://edugear:edugear@localhost:5432/edugear_test?schema=public
+      TEST_DATABASE_URL: postgresql://edugear:edugear@localhost:5432/edugear_test?schema=public
+      JWT_ACCESS_SECRET: ci-only-secret-value-long-enough-for-validation
+      NODE_ENV: test
+      EMAIL_PROVIDER: console
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests (auth, tenant isolation, RBAC)
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify migrations apply to a clean database
+        run: npx prisma migrate deploy
+
+  docker:
+    name: Build production image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t edugear-backend:${{ github.sha }} .
