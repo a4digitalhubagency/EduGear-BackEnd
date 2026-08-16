@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Keeps the build output at dist/main.js — the root tsconfig also includes
+    // prisma/ and test/, which would otherwise push everything under dist/src.
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "test", "dist", "prisma", "**/*spec.ts"]
+}
