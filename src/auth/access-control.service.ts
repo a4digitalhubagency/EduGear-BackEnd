@@ -4,6 +4,7 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { RequestContext } from '../common/context/request-context';
 import { PermissionKey } from '../common/constants/permissions';
+import { MembershipCacheService } from './membership-cache.service';
 
 export interface MembershipSnapshot {
   membershipId: string;
@@ -27,28 +28,25 @@ export interface MembershipSnapshot {
 /**
  * Resolves "what may this membership do" on every authenticated request.
  *
- * The MVP has no Redis, so this is an in-process TTL cache. Consequences are
- * accepted deliberately: a permission change is visible immediately on the
- * instance that made it (we invalidate), and within CACHE_TTL_MS on any other.
- * Swap the Map for Redis when a second instance appears.
+ * Caching lives in `MembershipCacheService`, which is Redis-backed when
+ * `REDIS_URL` is configured — so an invalidation on one instance is seen by all
+ * of them. Entries expire after 30s regardless, bounding any missed invalidation.
  */
 @Injectable()
 export class AccessControlService {
-  private static readonly CACHE_TTL_MS = 30_000;
   private readonly logger = new Logger(AccessControlService.name);
-  private readonly cache = new Map<
-    string,
-    { expiresAt: number; snapshot: MembershipSnapshot }
-  >();
 
-  constructor(@InjectPrisma() private readonly prisma: TenantAwarePrisma) {}
+  constructor(
+    @InjectPrisma() private readonly prisma: TenantAwarePrisma,
+    private readonly cache: MembershipCacheService,
+  ) {}
 
   async getMembershipSnapshot(
     membershipId: string,
   ): Promise<MembershipSnapshot | null> {
-    const cached = this.cache.get(membershipId);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.snapshot;
+    const cached = await this.cache.get(membershipId);
+    if (cached) {
+      return cached;
     }
 
     // Authentication happens before a tenant is established, so this lookup is
@@ -66,7 +64,7 @@ export class AccessControlService {
     );
 
     if (!membership) {
-      this.cache.delete(membershipId);
+      await this.cache.invalidateMembership(membershipId);
       return null;
     }
 
@@ -91,10 +89,7 @@ export class AccessControlService {
       ),
     };
 
-    this.cache.set(membershipId, {
-      expiresAt: Date.now() + AccessControlService.CACHE_TTL_MS,
-      snapshot,
-    });
+    await this.cache.set(snapshot);
 
     return snapshot;
   }
@@ -113,30 +108,25 @@ export class AccessControlService {
     return permissions.every((p) => snapshot.permissions.has(p));
   }
 
-  /** Call after any change to a membership, its role, or the owning user. */
-  invalidateMembership(membershipId: string): void {
-    this.cache.delete(membershipId);
+  /**
+   * Call after any change to a membership, its role, or the owning user.
+   * Await it: the next request must not be served a stale snapshot.
+   */
+  async invalidateMembership(membershipId: string): Promise<void> {
+    await this.cache.invalidateMembership(membershipId);
   }
 
   /** Call after a role's permissions change — affects every member holding it. */
-  invalidateRole(roleId: string): void {
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.snapshot.roleId === roleId) {
-        this.cache.delete(key);
-      }
-    }
+  async invalidateRole(roleId: string): Promise<void> {
+    await this.cache.invalidateRole(roleId);
   }
 
   /** Call on password change / logout-all, which bumps the user's token version. */
-  invalidateUser(userId: string): void {
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.snapshot.userId === userId) {
-        this.cache.delete(key);
-      }
-    }
+  async invalidateUser(userId: string): Promise<void> {
+    await this.cache.invalidateUser(userId);
   }
 
-  clear(): void {
-    this.cache.clear();
+  async clear(): Promise<void> {
+    await this.cache.clear();
   }
 }

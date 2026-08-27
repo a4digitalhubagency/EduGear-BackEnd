@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { testRedisUrl } from './utils/redis-url';
 
 // Load developer .env first; explicit values below always win because
 // process.loadEnvFile never overrides variables already present.
@@ -18,6 +19,15 @@ if (!testUrl) {
 }
 process.env.DATABASE_URL = testUrl;
 process.env.DIRECT_URL = testUrl;
+
+// Redis stays optional: without it the app falls back to per-instance state and
+// the suites still pass. When present, tests are pinned to their own database.
+const redisUrl = testRedisUrl(process.env.REDIS_URL);
+if (redisUrl) {
+  process.env.REDIS_URL = redisUrl;
+} else {
+  delete process.env.REDIS_URL;
+}
 
 process.env.EMAIL_PROVIDER = 'console';
 // Rate limiting has a dedicated suite (rate-limit.e2e-spec.ts, which sets its own

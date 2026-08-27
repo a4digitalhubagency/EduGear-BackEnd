@@ -49,6 +49,11 @@ export interface AppConfig {
     authTtlSeconds: number;
     authLimit: number;
   };
+  redis: {
+    /** Absent means "run single-instance": in-process throttling and permission cache. */
+    url?: string;
+    keyPrefix: string;
+  };
   email: {
     provider: EmailProvider;
     resendApiKey?: string;
@@ -104,6 +109,10 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
       limit: env.THROTTLE_LIMIT,
       authTtlSeconds: env.AUTH_THROTTLE_TTL_SECONDS,
       authLimit: env.AUTH_THROTTLE_LIMIT,
+    },
+    redis: {
+      url: env.REDIS_URL,
+      keyPrefix: env.REDIS_KEY_PREFIX,
     },
     email: {
       provider: env.EMAIL_PROVIDER,

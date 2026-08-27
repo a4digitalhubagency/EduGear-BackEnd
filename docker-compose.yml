@@ -1,7 +1,6 @@
 # Local development infrastructure only.
-# Production Postgres is Neon; this exists so developers and CI have a real database.
-# Redis is deliberately absent — the MVP has no Redis dependency. When one is
-# introduced (multi-instance rate limiting / queues), add the service here.
+# Production Postgres is Neon and Redis is the platform's managed instance; this
+# exists so developers and CI have real services to run against.
 
 services:
   postgres:
@@ -22,6 +21,22 @@ services:
       test: ['CMD-SHELL', 'pg_isready -U edugear -d edugear']
       interval: 5s
       timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: edugear-redis
+    restart: unless-stopped
+    # Rate-limit counters and the permission cache are both rebuildable, so an
+    # in-memory-only Redis is fine here. No persistence to lose.
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    ports:
+      # Non-default host port, matching the Postgres choice above.
+      - '56379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
       retries: 10
 
 volumes:

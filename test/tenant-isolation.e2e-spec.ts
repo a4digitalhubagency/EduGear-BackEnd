@@ -142,7 +142,9 @@ describe('Tenant isolation (School A cannot reach School B)', () => {
       data: { status: 'REVOKED' },
     });
     // Mirrors what UsersService.revokeAccess does after writing the change.
-    ctx.app.get(AccessControlService).invalidateMembership(extra.membershipId);
+    await ctx.app
+      .get(AccessControlService)
+      .invalidateMembership(extra.membershipId);
 
     const response = await ctx
       .http()

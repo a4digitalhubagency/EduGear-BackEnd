@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TenantsModule } from '../tenants/tenants.module';
 import { AccessControlService } from './access-control.service';
+import { MembershipCacheService } from './membership-cache.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
@@ -25,6 +26,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     PasswordService,
     TokenService,
     AccessControlService,
+    MembershipCacheService,
     JwtStrategy,
   ],
   exports: [AccessControlService, PasswordService, TokenService],

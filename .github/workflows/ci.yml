@@ -33,6 +33,16 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     env:
       DATABASE_URL: postgresql://edugear:edugear@localhost:5432/edugear_test?schema=public
       DIRECT_URL: postgresql://edugear:edugear@localhost:5432/edugear_test?schema=public
@@ -40,6 +50,8 @@ jobs:
       JWT_ACCESS_SECRET: ci-only-secret-value-long-enough-for-validation
       NODE_ENV: test
       EMAIL_PROVIDER: console
+      # Exercises the Redis-backed paths in CI rather than the fallback.
+      REDIS_URL: redis://localhost:6379
 
     steps:
       - uses: actions/checkout@v4

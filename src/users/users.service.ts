@@ -241,7 +241,7 @@ export class UsersService {
       }),
     );
 
-    this.accessControl.invalidateMembership(metadata.membershipId);
+    await this.accessControl.invalidateMembership(metadata.membershipId);
 
     const membership = await RequestContext.runAsSystem(() =>
       this.prisma.membership.findUnique({
@@ -295,7 +295,7 @@ export class UsersService {
       include: { user: true, role: true },
     });
 
-    this.accessControl.invalidateMembership(membershipId);
+    await this.accessControl.invalidateMembership(membershipId);
 
     if (dto.roleId && dto.roleId !== current.roleId) {
       await this.audit.record({
@@ -345,7 +345,7 @@ export class UsersService {
       }),
     );
 
-    this.accessControl.invalidateMembership(membershipId);
+    await this.accessControl.invalidateMembership(membershipId);
 
     await this.audit.record({
       action: AUDIT_ACTIONS.USER_ACCESS_REVOKED,

@@ -203,9 +203,15 @@ export class EnvironmentVariables {
   @IsOptional()
   R2_PUBLIC_URL?: string;
 
+  // Optional so local development and CI can run without Redis; required in
+  // production, where falling back to per-instance state would be silent breakage.
   @IsString()
   @IsOptional()
   REDIS_URL?: string;
+
+  /** Namespaces every EduGear key so a shared Redis can host other tenants of the box. */
+  @IsString()
+  REDIS_KEY_PREFIX = 'edugear:';
 }
 
 export function validateEnv(
@@ -244,6 +250,13 @@ export function validateEnv(
     }
     if (config.JWT_ACCESS_SECRET.includes('replace-me')) {
       throw new Error('JWT_ACCESS_SECRET still holds the placeholder value');
+    }
+    if (!config.REDIS_URL) {
+      throw new Error(
+        'REDIS_URL is required in production: without it, rate limiting and the ' +
+          'permission cache are per-instance, so a second instance would silently ' +
+          'weaken both.',
+      );
     }
   }
 

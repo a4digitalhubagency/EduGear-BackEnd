@@ -7,7 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { LoggerModule } from 'nestjs-pino';
+import { RedisModule } from './cache/redis.module';
+import { RedisService } from './cache/redis.service';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -72,19 +75,30 @@ import { UsersModule } from './users/users.module';
     }),
 
     ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<AppConfig, true>) => {
+      // Explicit despite RedisModule being global: this factory runs during
+      // module resolution, so the dependency should not rely on ordering.
+      imports: [RedisModule],
+      inject: [ConfigService, RedisService],
+      useFactory: (
+        config: ConfigService<AppConfig, true>,
+        redis: RedisService,
+      ) => {
         const throttle = config.get('throttle', { infer: true });
-        // In-memory storage: correct for a single instance, which is where the
-        // MVP starts. Introduce the Redis storage adapter before scaling out.
         return {
           throttlers: [
             { ttl: throttle.ttlSeconds * 1000, limit: throttle.limit },
           ],
+          // Shared storage means one budget across every instance. Without Redis
+          // the default in-memory storage applies, i.e. a per-instance budget —
+          // production refuses to boot in that state.
+          storage: redis.client
+            ? new ThrottlerStorageRedisService(redis.client)
+            : undefined,
         };
       },
     }),
 
+    RedisModule,
     PrismaModule,
     NotificationsModule,
     AuditModule,

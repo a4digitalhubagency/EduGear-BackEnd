@@ -14,9 +14,11 @@ Client
   ↓
 API (NestJS, REST, /api)
   ↓  RequestContextMiddleware → opens AsyncLocalStorage context
+Rate limiting (ThrottlerGuard)                    ← Redis storage, shared budget
+  ↓
 Authentication (JwtAuthGuard → JwtStrategy)
   ↓  resolves membership → sets tenant on the request context
-Authorization (PermissionsGuard, permission-based)
+Authorization (PermissionsGuard, permission-based) ← Redis permission cache, 30s
   ↓
 Application modules (auth, tenants, users, audit, notifications, health)
   ↓
@@ -28,8 +30,10 @@ PostgreSQL (Neon in production)
 Modular monolith. Each domain owns its controller, service, DTOs and authorization rules, so a
 module can be extracted into a service later without unpicking shared business logic.
 
-**No Redis.** Refresh tokens live in Postgres and rate limiting is in-process — deliberate, per the
-MVP cost strategy. Both are behind seams that can move to Redis when a second instance appears.
+**Redis** backs rate limiting and the permission cache, so both are shared across instances. It is
+required in production — boot fails without `REDIS_URL` rather than silently falling back to
+per-instance state. Locally and in tests it is optional: without it the app degrades to in-process
+storage, which is correct for exactly one instance. Refresh tokens stay in Postgres.
 
 ---
 
@@ -106,8 +110,9 @@ Controllers declare what an action needs:
 @RequirePermissions(PERMISSIONS.USERS_CREATE)
 ```
 
-Effective permissions are resolved server-side per request from the membership's role, cached
-in-process for 30s and invalidated immediately on role change, revocation or password change.
+Effective permissions are resolved server-side per request from the membership's role, cached in
+Redis for 30s and invalidated immediately on role change, revocation or password change — an
+invalidation on one instance is seen by all of them.
 
 ---
 
@@ -204,7 +209,7 @@ log queries stay stable.
 # 1. Install
 npm install
 
-# 2. Start Postgres (creates the test database too)
+# 2. Start Postgres (creates the test database too) and Redis
 docker compose up -d
 
 # 3. Configure
@@ -250,7 +255,7 @@ update or delete School B's data at both the HTTP and Prisma layers.
 
 ## Deployment
 
-Target stack: **Railway** (API) · **Neon** (Postgres) · **Cloudflare R2** (files, Phase 2+) ·
+Target stack: **Railway** (API + Redis) · **Neon** (Postgres) · **Cloudflare R2** (files, Phase 2+) ·
 **Resend** (email) · **Vercel** (frontend) · **Paystack** (payments, Phase 2).
 
 - `DATABASE_URL` is Neon's **pooled** connection; `DIRECT_URL` is the direct one used by migrations.
@@ -273,6 +278,7 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `CORS_ORIGINS` | Comma-separated; `*` is rejected in production |
 | `EMAIL_PROVIDER` | `console` (dev) or `resend` |
 | `RESEND_API_KEY` | Required when `EMAIL_PROVIDER=resend` |
+| `REDIS_URL` | Required in production; optional locally (falls back to in-process) |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a
 missing variable at runtime.
@@ -296,13 +302,14 @@ src/
     filters/       single exception filter
     guards/        JwtAuthGuard, PermissionsGuard
     middleware/    request context
+  cache/           Redis connection (null when unconfigured)
   database/        PrismaService, tenant guard extension, model registry
-  auth/            login, tokens, password, access control, JWT strategy
+  auth/            login, tokens, password, access control, permission cache
   tenants/         school provisioning, settings, roles, permission catalogue
   users/           staff invitation, listing, role changes, revocation
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
-  health/          liveness and database readiness
+  health/          liveness, database and cache readiness
 test/              integration suites + helpers
 ```
 

@@ -341,7 +341,7 @@ export class AuthService {
         data: { tokenVersion: { increment: 1 } },
       }),
     );
-    this.accessControl.invalidateUser(userId);
+    await this.accessControl.invalidateUser(userId);
     await this.audit.record({ action: AUDIT_ACTIONS.AUTH_LOGOUT_ALL });
   }
 
@@ -449,7 +449,7 @@ export class AuthService {
     );
 
     await this.tokens.revokeAllForUser(record.userId);
-    this.accessControl.invalidateUser(record.userId);
+    await this.accessControl.invalidateUser(record.userId);
 
     await this.audit.record({
       action: AUDIT_ACTIONS.AUTH_PASSWORD_RESET_COMPLETED,
@@ -492,7 +492,7 @@ export class AuthService {
     );
 
     await this.tokens.revokeAllForUser(user.id);
-    this.accessControl.invalidateUser(user.id);
+    await this.accessControl.invalidateUser(user.id);
 
     await this.audit.record({
       action: AUDIT_ACTIONS.AUTH_PASSWORD_CHANGED,
@@ -513,7 +513,7 @@ export class AuthService {
         data: { emailVerifiedAt: new Date() },
       }),
     );
-    this.accessControl.invalidateUser(record.userId);
+    await this.accessControl.invalidateUser(record.userId);
 
     await this.audit.record({
       action: AUDIT_ACTIONS.AUTH_EMAIL_VERIFIED,
@@ -583,7 +583,7 @@ export class AuthService {
   ): Promise<SessionDto> {
     // A fresh snapshot is required here: the membership may have been created
     // moments ago in the same request.
-    this.accessControl.invalidateMembership(membershipId);
+    await this.accessControl.invalidateMembership(membershipId);
     const snapshot =
       await this.accessControl.getMembershipSnapshot(membershipId);
     if (!snapshot)
