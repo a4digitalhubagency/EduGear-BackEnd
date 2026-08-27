@@ -11,6 +11,7 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import { LoggerModule } from 'nestjs-pino';
 import { RedisModule } from './cache/redis.module';
 import { RedisService } from './cache/redis.service';
+import { AcademicsModule } from './academics/academics.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -105,6 +106,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     TenantsModule,
     UsersModule,
+    AcademicsModule,
     HealthModule,
   ],
   providers: [
