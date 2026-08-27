@@ -5,12 +5,8 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
-import {
-  DateRange,
-  toDateOnly,
-  validateSessionName,
-  validateSessionRange,
-} from './academic-session-rules';
+import { validateSessionName } from './academic-session-rules';
+import { DateRange, toDateOnly, validateRange } from './date-range';
 import {
   AcademicSessionDto,
   CreateAcademicSessionDto,
@@ -200,7 +196,7 @@ export class AcademicSessionsService {
     }
 
     const range = { startDate: toDateOnly(start), endDate: toDateOnly(end) };
-    const rangeError = validateSessionRange(range);
+    const rangeError = validateRange(range);
     if (rangeError) {
       throw AppException.badRequest(rangeError, ErrorCode.VALIDATION_ERROR);
     }

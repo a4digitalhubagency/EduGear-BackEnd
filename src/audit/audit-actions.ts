@@ -33,6 +33,10 @@ export const AUDIT_ACTIONS = {
   ACADEMIC_SESSION_UPDATED: 'academic_session.updated',
   ACADEMIC_SESSION_DELETED: 'academic_session.deleted',
   ACADEMIC_SESSION_SET_CURRENT: 'academic_session.set_current',
+  TERM_CREATED: 'term.created',
+  TERM_UPDATED: 'term.updated',
+  TERM_DELETED: 'term.deleted',
+  TERM_SET_CURRENT: 'term.set_current',
 
   // Phase 1+ domains (names reserved so log queries stay stable)
   STUDENT_CREATED: 'student.created',

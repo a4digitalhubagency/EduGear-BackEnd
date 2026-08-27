@@ -130,11 +130,18 @@ are **copied into each school** at provisioning so a school can retune its own r
 ## Status
 
 Phase 0 (auth, tenancy, RBAC, users, audit) is complete. **Phase 1 is in progress**: academic sessions
-([src/academics/](src/academics/)) are done; terms, classes, class arms, students and guardians are
+and terms ([src/academics/](src/academics/)) are done; classes, class arms, students and guardians are
 next, in that order. Their Prisma models already exist — the modules do not. Do not skip ahead to a
 later phase (Finance, Results, Portal) without being asked.
 
 New feature modules follow the shape of [src/academics/](src/academics/): pure domain rules in a
 separate file with their own `*.spec.ts`, a service holding the Prisma work, a thin controller that
 declares `@RequirePermissions` and records the audit entry, and an `*.e2e-spec.ts` that covers the
-rules, the permission boundary and cross-tenant access.
+rules, the permission boundary and cross-tenant access. Date arithmetic shared across academic
+periods lives in [date-range.ts](src/academics/date-range.ts) — reuse it rather than re-deriving
+overlap and containment.
+
+Child resources are addressed flatly (`/academics/terms/:id`, not
+`/academics/sessions/:sessionId/terms/:id`): a nested path lets the parent in the URL disagree with
+the row's real parent. The parent id is supplied once, on create, and `UpdateTermDto` deliberately
+omits it — `forbidNonWhitelisted` then rejects any attempt to reparent.

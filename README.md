@@ -2,9 +2,9 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — academic sessions are
-live; terms, classes, class arms, students and guardians are next. Finance, Results, Parent Portal
-and Administration are not built yet — their schema foundations exist where noted.
+**Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — academic sessions and
+terms are live; classes, class arms, students and guardians are next. Finance, Results, Parent
+Portal and Administration are not built yet — their schema foundations exist where noted.
 
 ---
 
@@ -152,6 +152,13 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PATCH | `/academics/sessions/:id` | `academics.update` |
 | POST | `/academics/sessions/:id/set-current` | `academics.update` |
 | DELETE | `/academics/sessions/:id` | `academics.delete` |
+| POST | `/academics/terms` | `academics.create` |
+| GET | `/academics/terms` | `academics.read` |
+| GET | `/academics/terms/current` | `academics.read` |
+| GET | `/academics/terms/:id` | `academics.read` |
+| PATCH | `/academics/terms/:id` | `academics.update` |
+| POST | `/academics/terms/:id/set-current` | `academics.update` |
+| DELETE | `/academics/terms/:id` | `academics.delete` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -194,7 +201,7 @@ a school, not globally).
 `User` is a **global identity**: school access is granted through `Membership`, so one person can
 work at several schools — the architecture the brief asked for, not a `user.schoolId` shortcut.
 
-Student and guardian models remain schema-only; `AcademicSession` now has a module behind it.
+Student and guardian models remain schema-only; `AcademicSession` and `Term` now have modules behind them.
 
 ---
 
@@ -315,7 +322,7 @@ src/
   auth/            login, tokens, password, access control, permission cache
   tenants/         school provisioning, settings, roles, permission catalogue
   users/           staff invitation, listing, role changes, revocation
-  academics/       academic sessions (terms, classes and arms next)
+  academics/       academic sessions and terms (classes and arms next)
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -326,5 +333,5 @@ test/              integration suites + helpers
 
 ## What Phase 1 adds
 
-Academic sessions ✅, then terms, classes, class arms, students, guardians, admission,
+Academic sessions ✅ and terms ✅, then classes, class arms, students, guardians, admission,
 search/filtering, promotion and bulk import — building on the schema already in place.
