@@ -3,7 +3,7 @@
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
 **Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — the academic structure
-(sessions, terms, classes, arms) is live; students and guardians are next. Finance, Results, Parent
+(sessions, terms, classes, arms) and student records are live; guardians are next. Finance, Results, Parent
 Portal and Administration are not built yet — their schema foundations exist where noted.
 
 ---
@@ -169,6 +169,12 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/academics/class-arms/:id` | `academics.read` |
 | PATCH | `/academics/class-arms/:id` | `academics.update` |
 | DELETE | `/academics/class-arms/:id` | `academics.delete` |
+| POST | `/students` | `students.create` |
+| GET | `/students` | `students.read` |
+| GET | `/students/:id` | `students.read` |
+| PATCH | `/students/:id` | `students.update` |
+| PATCH | `/students/:id/status` | `students.update` |
+| DELETE | `/students/:id` | `students.delete` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -333,6 +339,7 @@ src/
   tenants/         school provisioning, settings, roles, permission catalogue
   users/           staff invitation, listing, role changes, revocation
   academics/       academic sessions, terms, classes and class arms
+  students/        admission, profiles, search and status
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -343,5 +350,5 @@ test/              integration suites + helpers
 
 ## What Phase 1 adds
 
-Academic sessions ✅, terms ✅, classes ✅ and class arms ✅, then students, guardians, admission,
-search/filtering, promotion and bulk import — building on the schema already in place.
+Academic sessions ✅, terms ✅, classes ✅, class arms ✅ and students ✅ (admission, search,
+filtering, profile, status), then guardians, promotion and bulk import.

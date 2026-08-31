@@ -48,6 +48,7 @@ export const AUDIT_ACTIONS = {
   STUDENT_CREATED: 'student.created',
   STUDENT_UPDATED: 'student.updated',
   STUDENT_DEACTIVATED: 'student.deactivated',
+  STUDENT_DELETED: 'student.deleted',
   FEE_STRUCTURE_CREATED: 'fee_structure.created',
   PAYMENT_RECORDED: 'payment.recorded',
   PAYMENT_VERIFIED: 'payment.verified',
