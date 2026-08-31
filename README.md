@@ -2,10 +2,10 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — the academic structure
-(sessions, terms, classes, arms), student records and guardians are live; promotion and bulk
-import are next. Finance, Results, Parent
-Portal and Administration are not built yet — their schema foundations exist where noted.
+**Status: Phases 0 and 1 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit) and
+Student Management (academic sessions, terms, classes, arms, students, guardians, promotion, bulk
+import) are live. Finance, Results, Parent Portal and Administration are not built yet — their
+schema foundations exist where noted.
 
 ---
 
@@ -171,6 +171,8 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PATCH | `/academics/class-arms/:id` | `academics.update` |
 | DELETE | `/academics/class-arms/:id` | `academics.delete` |
 | POST | `/students` | `students.create` |
+| POST | `/students/bulk` | `students.create` |
+| POST | `/students/promotions` | `students.update` |
 | GET | `/students` | `students.read` |
 | GET | `/students/:id` | `students.read` |
 | PATCH | `/students/:id` | `students.update` |
@@ -358,7 +360,21 @@ test/              integration suites + helpers
 
 ---
 
-## What Phase 1 adds
+## What Phase 1 delivered
 
-Academic sessions ✅, terms ✅, classes ✅, class arms ✅ and students ✅ (admission, search,
-filtering, profile, status) and guardians ✅, then promotion and bulk import.
+Academic sessions, terms, classes and class arms · student admission, profiles, search, filtering
+and status · guardians and student–guardian links · promotion and graduation · bulk import.
+
+Rules worth knowing before extending it:
+
+- A term's dates must sit inside its session's, and terms within a session may not overlap.
+- A term can only be made current while its own session is current, so the two markers never
+  disagree — Finance and Results will read both.
+- `Class.level` is unique per school because promotion walks it (level *n* → *n+1*).
+- Deleting is refused wherever a cascade would silently strip records: a class with arms, an arm
+  with students, a guardian with links.
+- Student counts are always filtered to `ACTIVE`, so withdrawing a student frees their place.
+- Bulk import is all-or-nothing; a partial import cannot be safely re-run once admission numbers
+  exist.
+
+Next: **Phase 2 — Finance.** Its models are deliberately not in the schema yet.

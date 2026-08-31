@@ -26,6 +26,12 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { CurrentSchool, RequirePermissions } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
 import {
+  BulkAdmitResultDto,
+  BulkAdmitStudentsDto,
+  PromoteStudentsDto,
+  PromotionResultDto,
+} from './dto/bulk.dto';
+import {
   AdmitStudentDto,
   ChangeStudentStatusDto,
   QueryStudentsDto,
@@ -64,6 +70,56 @@ export class StudentsController {
       },
     });
     return student;
+  }
+
+  @Post('bulk')
+  @RequirePermissions(PERMISSIONS.STUDENTS_CREATE)
+  @ApiOperation({
+    summary: 'Import many students at once',
+    description:
+      'All rows or none: a partial import cannot be safely re-run once admission numbers exist.',
+  })
+  @ApiCreatedResponse({ type: BulkAdmitResultDto })
+  async bulkAdmit(
+    @Body() dto: BulkAdmitStudentsDto,
+    @CurrentSchool() schoolId: string,
+  ): Promise<BulkAdmitResultDto> {
+    const result = await this.students.bulkAdmit(dto, schoolId);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_BULK_IMPORTED,
+      entityType: 'Student',
+      description: `Imported ${result.imported} students`,
+      metadata: {
+        imported: result.imported,
+        admissionNumbers: result.students.map((s) => s.studentId),
+      },
+    });
+    return result;
+  }
+
+  @Post('promotions')
+  @RequirePermissions(PERMISSIONS.STUDENTS_UPDATE)
+  @ApiOperation({
+    summary: 'Promote or graduate a class arm',
+    description:
+      'Moves every ACTIVE student in the source arm, or the listed subset.',
+  })
+  @ApiOkResponse({ type: PromotionResultDto })
+  @HttpCode(HttpStatus.OK)
+  async promote(@Body() dto: PromoteStudentsDto): Promise<PromotionResultDto> {
+    const result = await this.students.promote(dto);
+    await this.audit.record({
+      action: result.graduated
+        ? AUDIT_ACTIONS.STUDENT_GRADUATED
+        : AUDIT_ACTIONS.STUDENT_PROMOTED,
+      entityType: 'ClassArm',
+      entityId: dto.fromClassArmId,
+      description: result.graduated
+        ? `Graduated ${result.graduated} students from ${result.from}`
+        : `Promoted ${result.promoted} students from ${result.from} to ${result.to}`,
+      metadata: { ...result },
+    });
+    return result;
   }
 
   @Get()

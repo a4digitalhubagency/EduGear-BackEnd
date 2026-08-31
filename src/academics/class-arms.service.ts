@@ -137,6 +137,12 @@ export class ClassArmsService {
     }
   }
 
+  /** Human-readable label ("JSS1 A") for messages about a move. */
+  async describe(armId: string): Promise<string> {
+    const arm = await this.getOrThrow(armId);
+    return `${arm.class.name} ${arm.name}`;
+  }
+
   private async getOrThrow(id: string): Promise<ArmRow> {
     const found = await this.prisma.classArm.findUnique({
       where: { id },

@@ -129,19 +129,28 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 ## Status
 
-Phase 0 (auth, tenancy, RBAC, users, audit) is complete. **Phase 1 is in progress**: academic sessions
-and terms ([src/academics/](src/academics/)) are done; classes, class arms, students and guardians are
-next, in that order. Their Prisma models already exist — the modules do not. Do not skip ahead to a
-later phase (Finance, Results, Portal) without being asked.
+Phases 0 and 1 are complete. **Phase 2 (Finance) is next** — its models are deliberately absent from
+the schema, so it starts with a migration. Do not skip ahead to Results, Portal or Administration.
 
-New feature modules follow the shape of [src/academics/](src/academics/): pure domain rules in a
-separate file with their own `*.spec.ts`, a service holding the Prisma work, a thin controller that
-declares `@RequirePermissions` and records the audit entry, and an `*.e2e-spec.ts` that covers the
-rules, the permission boundary and cross-tenant access. Date arithmetic shared across academic
-periods lives in [date-range.ts](src/academics/date-range.ts) — reuse it rather than re-deriving
-overlap and containment.
+Feature modules follow the shape of [src/academics/](src/academics/) and [src/students/](src/students/):
+pure domain rules in their own file with a `*.spec.ts`, a service holding the Prisma work, a thin
+controller that declares `@RequirePermissions` and records the audit entry, and an `*.e2e-spec.ts`
+covering the rules, the permission boundary and cross-tenant access.
 
-Child resources are addressed flatly (`/academics/terms/:id`, not
-`/academics/sessions/:sessionId/terms/:id`): a nested path lets the parent in the URL disagree with
-the row's real parent. The parent id is supplied once, on create, and `UpdateTermDto` deliberately
-omits it — `forbidNonWhitelisted` then rejects any attempt to reparent.
+Conventions established across Phase 1, worth following:
+
+- **Child resources are addressed flatly** (`/academics/terms/:id`, `/academics/class-arms/:id`) so a
+  parent id in the URL can never disagree with the row's real parent. The parent is set on create and
+  omitted from the update DTO, so `forbidNonWhitelisted` rejects reparenting. The exception is a join
+  row with no id of its own — `/students/:studentId/guardians/:guardianId` — where the pair in the
+  path *is* the identity.
+- **Refuse a delete wherever a cascade would silently destroy records**: a class with arms, an arm
+  with students, a guardian with links. Make the caller empty it first.
+- **Student counts are filtered to `ACTIVE`** everywhere they appear, so a withdrawal frees a place.
+- Date arithmetic shared across academic periods lives in
+  [date-range.ts](src/academics/date-range.ts) — reuse it rather than re-deriving overlap and
+  containment.
+- Admission numbers are generated per school (`<year>/<sequence>`), and the unique index is the real
+  guard — the service retries on `P2002` rather than trusting its read.
+- `Prisma.TransactionClient` does not match the extended client. Use `TxClient` from
+  [prisma.service.ts](src/database/prisma.service.ts) for `$transaction` callbacks.

@@ -8,6 +8,12 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { formatAdmissionNumber, nextSequence } from './admission-number';
 import {
+  BulkAdmitResultDto,
+  BulkAdmitStudentsDto,
+  PromoteStudentsDto,
+  PromotionResultDto,
+} from './dto/bulk.dto';
+import {
   AdmitStudentDto,
   ChangeStudentStatusDto,
   QueryStudentsDto,
@@ -220,6 +226,240 @@ export class StudentsService {
     // Guardian links cascade; finance and results do not exist yet. Schools
     // that want to keep the record should set a status instead.
     await this.prisma.student.delete({ where: { id } });
+  }
+
+  /**
+   * Imports a whole intake in one transaction — all rows or none.
+   *
+   * Partial imports are worse than they look: re-running the fixed file would
+   * re-admit whatever already succeeded, and admission numbers make those
+   * duplicates hard to unpick. Failing the batch means the caller fixes the
+   * file and runs it again cleanly.
+   */
+  async bulkAdmit(
+    dto: BulkAdmitStudentsDto,
+    schoolId: string,
+  ): Promise<BulkAdmitResultDto> {
+    const rows = dto.students;
+
+    rows.forEach((row, index) => {
+      try {
+        this.assertBornBeforeAdmission(
+          row.dateOfBirth ?? null,
+          row.admissionDate,
+        );
+      } catch {
+        throw AppException.badRequest(
+          `Row ${index + 1}: dateOfBirth must be before admissionDate`,
+          ErrorCode.VALIDATION_ERROR,
+        );
+      }
+    });
+
+    this.assertNoDuplicateNumbersWithin(rows);
+    await this.assertSuppliedNumbersFree(rows);
+    await this.assertArmsHaveRoom(rows);
+
+    const studentIds = await this.allocateNumbers(rows);
+
+    try {
+      const created = await this.prisma.$transaction(
+        rows.map((row, index) =>
+          this.prisma.student.create({
+            data: {
+              // Prisma's types require the tenant column on create. Supplying
+              // it is safe: the guard rejects any other tenant's id.
+              schoolId,
+              studentId: studentIds[index],
+              firstName: row.firstName,
+              lastName: row.lastName,
+              middleName: row.middleName ?? null,
+              gender: row.gender,
+              dateOfBirth: row.dateOfBirth ?? null,
+              email: row.email ?? null,
+              phone: row.phone ?? null,
+              addressLine: row.addressLine ?? null,
+              photoUrl: row.photoUrl ?? null,
+              admissionDate: row.admissionDate,
+              classArmId: row.classArmId ?? null,
+              bloodGroup: row.bloodGroup ?? null,
+              genotype: row.genotype ?? null,
+              stateOfOrigin: row.stateOfOrigin ?? null,
+              lga: row.lga ?? null,
+              nationality: row.nationality ?? 'Nigerian',
+              religion: row.religion ?? null,
+              notes: row.notes ?? null,
+            },
+            include: WITH_ARM,
+          }),
+        ),
+      );
+
+      return {
+        imported: created.length,
+        students: created.map((row) => this.toDto(row)),
+      };
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw AppException.conflict(
+          'An admission number in this batch was taken while importing. Nothing was imported — please retry.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * End-of-session movement: the whole arm steps up together, or leaves.
+   * Only ACTIVE students move — a withdrawn student should not reappear in
+   * next year's register.
+   */
+  async promote(dto: PromoteStudentsDto): Promise<PromotionResultDto> {
+    const graduating = dto.graduate === true;
+
+    if (graduating === Boolean(dto.toClassArmId)) {
+      throw AppException.badRequest(
+        'Provide either toClassArmId or graduate: true, not both',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+    if (dto.toClassArmId === dto.fromClassArmId) {
+      throw AppException.badRequest(
+        'toClassArmId must differ from fromClassArmId',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+
+    const from = await this.arms.describe(dto.fromClassArmId);
+    const to = dto.toClassArmId
+      ? await this.arms.describe(dto.toClassArmId)
+      : null;
+
+    const movers = await this.prisma.student.findMany({
+      where: {
+        classArmId: dto.fromClassArmId,
+        status: StudentStatus.ACTIVE,
+        ...(dto.studentIds ? { id: { in: dto.studentIds } } : {}),
+      },
+      select: { id: true },
+    });
+
+    // Checked before the empty case: when the caller named students, telling
+    // them the names are wrong beats telling them the arm is empty.
+    if (dto.studentIds && movers.length !== dto.studentIds.length) {
+      throw AppException.badRequest(
+        `Some students are not active in ${from}`,
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+    if (movers.length === 0) {
+      throw AppException.conflict(`No active students to move out of ${from}`);
+    }
+
+    if (dto.toClassArmId) {
+      await this.arms.assertHasRoom(dto.toClassArmId, movers.length);
+    }
+
+    const ids = movers.map((row) => row.id);
+    await this.prisma.student.updateMany({
+      where: { id: { in: ids } },
+      data: graduating
+        ? // Graduates keep their record but leave the roll entirely.
+          { status: StudentStatus.GRADUATED, classArmId: null }
+        : { classArmId: dto.toClassArmId },
+    });
+
+    return {
+      promoted: graduating ? 0 : ids.length,
+      graduated: graduating ? ids.length : 0,
+      from,
+      to,
+    };
+  }
+
+  private assertNoDuplicateNumbersWithin(rows: AdmitStudentDto[]): void {
+    const seen = new Set<string>();
+
+    rows.forEach((row, index) => {
+      if (!row.studentId) return;
+      if (seen.has(row.studentId)) {
+        throw AppException.duplicate(
+          `Row ${index + 1}: admission number "${row.studentId}" appears twice in this batch`,
+        );
+      }
+      seen.add(row.studentId);
+    });
+  }
+
+  private async assertSuppliedNumbersFree(
+    rows: AdmitStudentDto[],
+  ): Promise<void> {
+    const supplied = rows
+      .map((row) => row.studentId)
+      .filter((id): id is string => Boolean(id));
+    if (supplied.length === 0) return;
+
+    const clashes = await this.prisma.student.findMany({
+      where: { studentId: { in: supplied } },
+      select: { studentId: true },
+    });
+
+    if (clashes.length > 0) {
+      throw AppException.duplicate(
+        `Admission number(s) already in use: ${clashes
+          .map((row) => row.studentId)
+          .join(', ')}`,
+      );
+    }
+  }
+
+  /** Capacity is per arm, so a batch is checked by how many it sends to each. */
+  private async assertArmsHaveRoom(rows: AdmitStudentDto[]): Promise<void> {
+    const incoming = new Map<string, number>();
+    for (const row of rows) {
+      if (!row.classArmId) continue;
+      incoming.set(row.classArmId, (incoming.get(row.classArmId) ?? 0) + 1);
+    }
+
+    for (const [armId, count] of incoming) {
+      await this.arms.assertHasRoom(armId, count);
+    }
+  }
+
+  /**
+   * Numbers are allocated once for the batch rather than per row, so a 200-row
+   * import does one read instead of 200.
+   */
+  private async allocateNumbers(rows: AdmitStudentDto[]): Promise<string[]> {
+    const years = new Set(
+      rows
+        .filter((row) => !row.studentId)
+        .map((row) => row.admissionDate.getUTCFullYear()),
+    );
+
+    const nextByYear = new Map<number, number>();
+    for (const year of years) {
+      const existing = await this.prisma.student.findMany({
+        where: { studentId: { startsWith: `${year}/` } },
+        select: { studentId: true },
+      });
+      nextByYear.set(
+        year,
+        nextSequence(
+          existing.map((row) => row.studentId),
+          year,
+        ),
+      );
+    }
+
+    return rows.map((row) => {
+      if (row.studentId) return row.studentId;
+
+      const year = row.admissionDate.getUTCFullYear();
+      const sequence = nextByYear.get(year) ?? 1;
+      nextByYear.set(year, sequence + 1);
+      return formatAdmissionNumber(year, sequence);
+    });
   }
 
   private buildWhere(query: QueryStudentsDto): Prisma.StudentWhereInput {
