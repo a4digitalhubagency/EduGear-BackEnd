@@ -40,6 +40,9 @@ export const AUDIT_ACTIONS = {
   CLASS_CREATED: 'class.created',
   CLASS_UPDATED: 'class.updated',
   CLASS_DELETED: 'class.deleted',
+  CLASS_ARM_CREATED: 'class_arm.created',
+  CLASS_ARM_UPDATED: 'class_arm.updated',
+  CLASS_ARM_DELETED: 'class_arm.deleted',
 
   // Phase 1+ domains (names reserved so log queries stay stable)
   STUDENT_CREATED: 'student.created',

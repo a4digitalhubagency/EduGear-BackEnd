@@ -2,8 +2,8 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — academic sessions, terms
-and classes are live; class arms, students and guardians are next. Finance, Results, Parent
+**Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — the academic structure
+(sessions, terms, classes, arms) is live; students and guardians are next. Finance, Results, Parent
 Portal and Administration are not built yet — their schema foundations exist where noted.
 
 ---
@@ -164,6 +164,11 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/academics/classes/:id` | `academics.read` |
 | PATCH | `/academics/classes/:id` | `academics.update` |
 | DELETE | `/academics/classes/:id` | `academics.delete` |
+| POST | `/academics/class-arms` | `academics.create` |
+| GET | `/academics/class-arms` | `academics.read` |
+| GET | `/academics/class-arms/:id` | `academics.read` |
+| PATCH | `/academics/class-arms/:id` | `academics.update` |
+| DELETE | `/academics/class-arms/:id` | `academics.delete` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -327,7 +332,7 @@ src/
   auth/            login, tokens, password, access control, permission cache
   tenants/         school provisioning, settings, roles, permission catalogue
   users/           staff invitation, listing, role changes, revocation
-  academics/       academic sessions, terms and classes (arms next)
+  academics/       academic sessions, terms, classes and class arms
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -338,5 +343,5 @@ test/              integration suites + helpers
 
 ## What Phase 1 adds
 
-Academic sessions ✅, terms ✅ and classes ✅, then class arms, students, guardians, admission,
+Academic sessions ✅, terms ✅, classes ✅ and class arms ✅, then students, guardians, admission,
 search/filtering, promotion and bulk import — building on the schema already in place.
