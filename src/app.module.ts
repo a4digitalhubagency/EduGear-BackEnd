@@ -25,6 +25,7 @@ import { PrismaModule } from './database/prisma.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { GuardiansModule } from './guardians/guardians.module';
 import { StudentsModule } from './students/students.module';
 import { UsersModule } from './users/users.module';
 
@@ -109,6 +110,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AcademicsModule,
     StudentsModule,
+    GuardiansModule,
     HealthModule,
   ],
   providers: [

@@ -3,7 +3,8 @@
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
 **Status: Phase 0 (backend foundation) complete. Phase 1 in progress** — the academic structure
-(sessions, terms, classes, arms) and student records are live; guardians are next. Finance, Results, Parent
+(sessions, terms, classes, arms), student records and guardians are live; promotion and bulk
+import are next. Finance, Results, Parent
 Portal and Administration are not built yet — their schema foundations exist where noted.
 
 ---
@@ -175,6 +176,14 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PATCH | `/students/:id` | `students.update` |
 | PATCH | `/students/:id/status` | `students.update` |
 | DELETE | `/students/:id` | `students.delete` |
+| POST | `/guardians` | `guardians.create` |
+| GET | `/guardians` | `guardians.read` |
+| GET | `/guardians/:id` | `guardians.read` |
+| PATCH | `/guardians/:id` | `guardians.update` |
+| DELETE | `/guardians/:id` | `guardians.delete` |
+| POST | `/students/:studentId/guardians` | `guardians.update` |
+| PATCH | `/students/:studentId/guardians/:guardianId` | `guardians.update` |
+| DELETE | `/students/:studentId/guardians/:guardianId` | `guardians.update` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -340,6 +349,7 @@ src/
   users/           staff invitation, listing, role changes, revocation
   academics/       academic sessions, terms, classes and class arms
   students/        admission, profiles, search and status
+  guardians/       guardian records and student links
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -351,4 +361,4 @@ test/              integration suites + helpers
 ## What Phase 1 adds
 
 Academic sessions ✅, terms ✅, classes ✅, class arms ✅ and students ✅ (admission, search,
-filtering, profile, status), then guardians, promotion and bulk import.
+filtering, profile, status) and guardians ✅, then promotion and bulk import.
