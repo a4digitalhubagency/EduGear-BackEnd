@@ -129,15 +129,15 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 ## Status
 
-Phases 0 and 1 are complete. **Phase 2 (Finance) is next** — its models are deliberately absent from
-the schema, so it starts with a migration. Do not skip ahead to Results, Portal or Administration.
+Phases 0, 1 and 2 are complete. **Phase 3 (Results) is next** — its models are deliberately absent
+from the schema, so it starts with a migration. Do not skip ahead to Portal or Administration.
 
-Feature modules follow the shape of [src/academics/](src/academics/) and [src/students/](src/students/):
-pure domain rules in their own file with a `*.spec.ts`, a service holding the Prisma work, a thin
-controller that declares `@RequirePermissions` and records the audit entry, and an `*.e2e-spec.ts`
-covering the rules, the permission boundary and cross-tenant access.
+Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/)
+and [src/finance/](src/finance/): pure domain rules in their own file with a `*.spec.ts`, a service
+holding the Prisma work, a thin controller that declares `@RequirePermissions` and records the audit
+entry, and an `*.e2e-spec.ts` covering the rules, the permission boundary and cross-tenant access.
 
-Conventions established across Phase 1, worth following:
+Conventions established across Phases 1 and 2, worth following:
 
 - **Child resources are addressed flatly** (`/academics/terms/:id`, `/academics/class-arms/:id`) so a
   parent id in the URL can never disagree with the row's real parent. The parent is set on create and
@@ -145,12 +145,25 @@ Conventions established across Phase 1, worth following:
   row with no id of its own — `/students/:studentId/guardians/:guardianId` — where the pair in the
   path *is* the identity.
 - **Refuse a delete wherever a cascade would silently destroy records**: a class with arms, an arm
-  with students, a guardian with links. Make the caller empty it first.
+  with students, a guardian with links, a fee category in use.
 - **Student counts are filtered to `ACTIVE`** everywhere they appear, so a withdrawal frees a place.
 - Date arithmetic shared across academic periods lives in
   [date-range.ts](src/academics/date-range.ts) — reuse it rather than re-deriving overlap and
   containment.
-- Admission numbers are generated per school (`<year>/<sequence>`), and the unique index is the real
-  guard — the service retries on `P2002` rather than trusting its read.
+- Generated identifiers (admission numbers, receipt numbers) read the last value and write the next,
+  so the unique index is the real guard — retry on `P2002` rather than trusting the read.
 - `Prisma.TransactionClient` does not match the extended client. Use `TxClient` from
   [prisma.service.ts](src/database/prisma.service.ts) for `$transaction` callbacks.
+
+### Money (Phase 2)
+
+- **Always `Prisma.Decimal`, never `number`.** [fee-math.ts](src/finance/fee-math.ts) holds the
+  arithmetic and the status derivation; amounts become numbers only in DTOs, where they are read.
+- **Only VERIFIED payments move a balance.** A recorded payment is `PENDING` and changes nothing —
+  that is the whole point of verification, and pending amounts still count toward the overpayment
+  ceiling.
+- **Recompute an invoice from its verified payments**, never by adding or subtracting a delta.
+  Rebuilding from the source cannot drift and makes rejection reverse correctly.
+- **An issued invoice is immutable.** Line items are copied onto it at assignment; structure amounts
+  are frozen once invoices exist. Retire a category or archive a structure instead of editing it.
+- Waived and cancelled invoices are never counted as debts.

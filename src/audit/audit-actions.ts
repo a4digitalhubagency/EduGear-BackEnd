@@ -73,6 +73,7 @@ export const AUDIT_ACTIONS = {
   PAYMENT_RECORDED: 'payment.recorded',
   PAYMENT_VERIFIED: 'payment.verified',
   PAYMENT_REJECTED: 'payment.rejected',
+  PAYMENT_REMINDERS_SENT: 'payment.reminders_sent',
   RESULT_CREATED: 'result.created',
   RESULT_PUBLISHED: 'result.published',
 } as const;

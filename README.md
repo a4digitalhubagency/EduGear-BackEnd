@@ -2,10 +2,10 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phases 0 and 1 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit) and
-Student Management (academic sessions, terms, classes, arms, students, guardians, promotion, bulk
-import) are live. Finance, Results, Parent Portal and Administration are not built yet — their
-schema foundations exist where noted.
+**Status: Phases 0, 1 and 2 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit),
+Student Management (sessions, terms, classes, arms, students, guardians, promotion, bulk import) and
+Finance (fee structures, invoicing, payments with verification, debtors, reminders) are live.
+Results, Parent Portal and Administration are not built yet.
 
 ---
 
@@ -22,7 +22,7 @@ Authentication (JwtAuthGuard → JwtStrategy)
   ↓  resolves membership → sets tenant on the request context
 Authorization (PermissionsGuard, permission-based) ← Redis permission cache, 30s
   ↓
-Application modules (auth, tenants, users, academics, audit, notifications, health)
+Application modules (auth, tenants, users, academics, students, guardians, finance, audit, …)
   ↓
 Prisma + tenant-guard extension  ← injects schoolId, fails closed
   ↓
@@ -186,6 +186,32 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | POST | `/students/:studentId/guardians` | `guardians.update` |
 | PATCH | `/students/:studentId/guardians/:guardianId` | `guardians.update` |
 | DELETE | `/students/:studentId/guardians/:guardianId` | `guardians.update` |
+| POST | `/finance/fee-categories` | `finance.create` |
+| GET | `/finance/fee-categories` | `finance.read` |
+| GET | `/finance/fee-categories/:id` | `finance.read` |
+| PATCH | `/finance/fee-categories/:id` | `finance.update` |
+| DELETE | `/finance/fee-categories/:id` | `finance.update` |
+| POST | `/finance/fee-structures` | `finance.create` |
+| GET | `/finance/fee-structures` | `finance.read` |
+| GET | `/finance/fee-structures/:id` | `finance.read` |
+| PATCH | `/finance/fee-structures/:id` | `finance.update` |
+| POST | `/finance/fee-structures/:id/publish` | `finance.update` |
+| POST | `/finance/fee-structures/:id/archive` | `finance.update` |
+| DELETE | `/finance/fee-structures/:id` | `finance.update` |
+| POST | `/finance/invoices/assign` | `finance.create` |
+| GET | `/finance/invoices` | `finance.read` |
+| GET | `/finance/invoices/:id` | `finance.read` |
+| POST | `/finance/invoices/:id/discount` | `finance.update` |
+| POST | `/finance/invoices/:id/waive` | `finance.update` |
+| POST | `/finance/invoices/:id/cancel` | `finance.update` |
+| POST | `/finance/payments` | `finance.create` |
+| GET | `/finance/payments` | `finance.read` |
+| GET | `/finance/payments/:id` | `finance.read` |
+| POST | `/finance/payments/:id/verify` | `finance.verify` |
+| POST | `/finance/payments/:id/reject` | `finance.verify` |
+| GET | `/finance/reports/summary` | `finance.read` |
+| GET | `/finance/reports/debtors` | `finance.read` |
+| POST | `/finance/reminders` | `finance.update` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -223,6 +249,7 @@ a school, not globally).
 | Sessions & tokens | `RefreshToken`, `VerificationToken` |
 | Academic structure | `AcademicSession`, `Term`, `Class`, `ClassArm` |
 | Students | `Student`, `Guardian`, `StudentGuardian` |
+| Finance | `FeeCategory`, `FeeStructure`, `FeeStructureItem`, `StudentFee`, `StudentFeeItem`, `Payment` |
 | Audit | `AuditLog` |
 
 `User` is a **global identity**: school access is granted through `Membership`, so one person can
@@ -352,6 +379,7 @@ src/
   academics/       academic sessions, terms, classes and class arms
   students/        admission, profiles, search and status
   guardians/       guardian records and student links
+  finance/         fee structures, invoices, payments, reports, reminders
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -365,16 +393,38 @@ test/              integration suites + helpers
 Academic sessions, terms, classes and class arms · student admission, profiles, search, filtering
 and status · guardians and student–guardian links · promotion and graduation · bulk import.
 
-Rules worth knowing before extending it:
-
 - A term's dates must sit inside its session's, and terms within a session may not overlap.
-- A term can only be made current while its own session is current, so the two markers never
-  disagree — Finance and Results will read both.
+- A term can only be made current while its own session is current.
 - `Class.level` is unique per school because promotion walks it (level *n* → *n+1*).
-- Deleting is refused wherever a cascade would silently strip records: a class with arms, an arm
-  with students, a guardian with links.
+- Deleting is refused wherever a cascade would silently strip records.
 - Student counts are always filtered to `ACTIVE`, so withdrawing a student frees their place.
-- Bulk import is all-or-nothing; a partial import cannot be safely re-run once admission numbers
-  exist.
+- Bulk import is all-or-nothing; a partial import cannot be safely re-run.
 
-Next: **Phase 2 — Finance.** Its models are deliberately not in the schema yet.
+---
+
+## What Phase 2 delivered
+
+Fee categories and structures · invoicing · payments with verification and receipts · discounts and
+waivers · outstanding balances, debtor lists and collection reports · guardian fee reminders.
+
+Money is `Decimal(12,2)` everywhere, never a float. Amounts become numbers only at the DTO boundary,
+where they are read rather than added.
+
+The rules that make the numbers trustworthy:
+
+- **A recorded payment moves nothing.** It lands `PENDING`; only verification issues a receipt number
+  and reduces a balance. That is what makes an unverified receipt harmless.
+- **Invoices are recomputed from their verified payments**, never by adding a delta — so rejecting an
+  already-verified payment reverses the balance correctly and totals cannot drift.
+- **Pending payments count toward the overpayment ceiling**, so two bursars each recording the full
+  balance cannot both be accepted.
+- **An issued invoice is frozen.** Line items are copied onto the bill at assignment, so renaming or
+  retiring a category never restates what a parent was charged, and structure amounts are locked once
+  invoices exist.
+- **Only `PUBLISHED` structures can be assigned**, and re-running an assignment skips students who
+  already hold that invoice, so adding a late arrival bills only them.
+- **Discounts and waivers are recorded with a reason**, leaving both what was billed and what was
+  forgiven visible in the ledger.
+- Withdrawn students are never billed; waived and cancelled invoices are never counted as debts.
+
+Next: **Phase 3 — Results.** Its models are deliberately not in the schema yet.
