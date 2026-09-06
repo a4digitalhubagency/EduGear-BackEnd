@@ -104,16 +104,22 @@ model School {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  roles            Role[]
-  memberships      Membership[]
-  academicSessions AcademicSession[]
-  terms            Term[]
-  classes          Class[]
-  classArms        ClassArm[]
-  students         Student[]
-  guardians        Guardian[]
-  studentGuardians StudentGuardian[]
-  auditLogs        AuditLog[]
+  roles             Role[]
+  memberships       Membership[]
+  academicSessions  AcademicSession[]
+  terms             Term[]
+  classes           Class[]
+  classArms         ClassArm[]
+  students          Student[]
+  guardians         Guardian[]
+  studentGuardians  StudentGuardian[]
+  auditLogs         AuditLog[]
+  feeCategories     FeeCategory[]
+  feeStructures     FeeStructure[]
+  feeStructureItems FeeStructureItem[]
+  studentFees       StudentFee[]
+  studentFeeItems   StudentFeeItem[]
+  payments          Payment[]
 
   @@index([status])
   @@map("schools")
@@ -295,8 +301,9 @@ model AcademicSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  terms  Term[]
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  terms         Term[]
+  feeStructures FeeStructure[]
 
   @@unique([schoolId, name])
   @@index([schoolId, isCurrent])
@@ -314,8 +321,9 @@ model Term {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  school        School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  session       AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  feeStructures FeeStructure[]
 
   @@unique([sessionId, name])
   @@index([schoolId, isCurrent])
@@ -331,8 +339,9 @@ model Class {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  school School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  arms   ClassArm[]
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  arms          ClassArm[]
+  feeStructures FeeStructure[]
 
   @@unique([schoolId, name])
   @@unique([schoolId, level])
@@ -392,9 +401,11 @@ model Student {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  school   School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  classArm ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
+  school    School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm  ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
   guardians StudentGuardian[]
+  fees      StudentFee[]
+  payments  Payment[]
 
   @@unique([schoolId, studentId])
   @@index([schoolId, status])
@@ -480,4 +491,198 @@ model AuditLog {
   @@index([schoolId, action])
   @@index([actorUserId])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Finance (Phase 2)
+//
+// Money is Decimal(12,2), never a float: naira amounts must add up exactly.
+// An invoice (StudentFee) snapshots what it charged, so editing or renaming a
+// fee structure later cannot rewrite what a parent was already billed.
+// ---------------------------------------------------------------------------
+
+enum FeeStructureStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum StudentFeeStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  WAIVED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  POS
+  ONLINE
+  CHEQUE
+}
+
+/// Recorded money is PENDING until a bursar verifies it; only VERIFIED payments
+/// reduce a balance, which is what makes an unverified receipt harmless.
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// A kind of charge — Tuition, Books, PTA levy.
+model FeeCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  schoolId    String   @db.Uuid
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  items  FeeStructureItem[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId, isActive])
+  @@map("fee_categories")
+}
+
+/// What a given class owes for a session or term.
+model FeeStructure {
+  id          String             @id @default(uuid()) @db.Uuid
+  schoolId    String             @db.Uuid
+  sessionId   String             @db.Uuid
+  /// Null means the charge covers the whole session rather than one term.
+  termId      String?            @db.Uuid
+  /// Null means it applies to every class in the school.
+  classId     String?            @db.Uuid
+  name        String
+  description String?
+  status      FeeStructureStatus @default(DRAFT)
+  dueDate     DateTime?          @db.Date
+  /// Maintained from the items so listing does not have to aggregate.
+  totalAmount Decimal            @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  school      School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  session     AcademicSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  term        Term?              @relation(fields: [termId], references: [id], onDelete: Cascade)
+  class       Class?             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  items       FeeStructureItem[]
+  studentFees StudentFee[]
+
+  @@unique([schoolId, sessionId, name])
+  @@index([schoolId, status])
+  @@index([schoolId, sessionId, termId])
+  @@map("fee_structures")
+}
+
+model FeeStructureItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  schoolId    String   @db.Uuid
+  structureId String   @db.Uuid
+  categoryId  String   @db.Uuid
+  amount      Decimal  @db.Decimal(12, 2)
+  /// Optional charges (a school bus place) are billed only when asked for.
+  isOptional  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school    School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  structure FeeStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+  category  FeeCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@unique([structureId, categoryId])
+  @@index([schoolId])
+  @@map("fee_structure_items")
+}
+
+/// One student's invoice for one fee structure.
+model StudentFee {
+  id             String           @id @default(uuid()) @db.Uuid
+  schoolId       String           @db.Uuid
+  studentId      String           @db.Uuid
+  structureId    String           @db.Uuid
+  sessionId      String           @db.Uuid
+  termId         String?          @db.Uuid
+  /// Snapshot of the structure total at assignment.
+  totalAmount    Decimal          @db.Decimal(12, 2)
+  /// Scholarships and sibling discounts reduce what is owed without hiding it.
+  discountAmount Decimal          @default(0) @db.Decimal(12, 2)
+  /// Maintained from VERIFIED payments only.
+  amountPaid     Decimal          @default(0) @db.Decimal(12, 2)
+  status         StudentFeeStatus @default(UNPAID)
+  dueDate        DateTime?        @db.Date
+  waiverReason   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  school    School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student   Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  structure FeeStructure     @relation(fields: [structureId], references: [id], onDelete: Restrict)
+  items     StudentFeeItem[]
+  payments  Payment[]
+
+  @@unique([studentId, structureId])
+  @@index([schoolId, status])
+  @@index([schoolId, studentId])
+  @@index([schoolId, sessionId, termId])
+  @@map("student_fees")
+}
+
+/// What the invoice charged, copied at assignment. Category name is denormalised
+/// so renaming or deleting a category never rewrites an issued bill.
+model StudentFeeItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  schoolId     String   @db.Uuid
+  studentFeeId String   @db.Uuid
+  categoryId   String?  @db.Uuid
+  categoryName String
+  amount       Decimal  @db.Decimal(12, 2)
+  createdAt    DateTime @default(now())
+
+  school     School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([studentFeeId])
+  @@map("student_fee_items")
+}
+
+model Payment {
+  id                     String        @id @default(uuid()) @db.Uuid
+  schoolId               String        @db.Uuid
+  studentFeeId           String        @db.Uuid
+  studentId              String        @db.Uuid
+  /// Issued on verification, unique per school.
+  receiptNumber          String
+  amount                 Decimal       @db.Decimal(12, 2)
+  method                 PaymentMethod
+  /// Teller number, transfer reference or POS stub.
+  reference              String?
+  evidenceUrl            String?
+  paidAt                 DateTime
+  status                 PaymentStatus @default(PENDING)
+  note                   String?
+  /// Memberships, not users: staff leaving must not orphan a payment record.
+  recordedByMembershipId String?       @db.Uuid
+  verifiedByMembershipId String?       @db.Uuid
+  verifiedAt             DateTime?
+  rejectionReason        String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  school     School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  student    Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, receiptNumber])
+  @@index([schoolId, status])
+  @@index([schoolId, studentId])
+  @@index([schoolId, paidAt])
+  @@index([studentFeeId])
+  @@map("payments")
 }
