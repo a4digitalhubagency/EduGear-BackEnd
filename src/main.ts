@@ -1,21 +1,24 @@
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import type { Application } from 'express';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
+import { applyHttpSettings } from './http-settings';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
   const config = app.get(ConfigService<AppConfig, true>);
   const appConfig = config.get('app', { infer: true });
 
   app.useLogger(app.get(Logger));
   app.flushLogs();
 
-  app.setGlobalPrefix(appConfig.apiPrefix);
+  applyHttpSettings(app, appConfig.apiPrefix);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
   app.enableCors({
@@ -25,9 +28,6 @@ async function bootstrap(): Promise<void> {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
     exposedHeaders: ['X-Request-Id'],
   });
-
-  // Behind Railway/Fly/Cloud Run, the real client IP arrives in X-Forwarded-For.
-  (app.getHttpAdapter().getInstance() as Application).set('trust proxy', 1);
 
   app.enableShutdownHooks();
 
@@ -48,6 +48,10 @@ async function bootstrap(): Promise<void> {
         .addTag('Authentication')
         .addTag('School')
         .addTag('Users')
+        .addTag('Academics')
+        .addTag('Students')
+        .addTag('Guardians')
+        .addTag('Finance')
         .addTag('Audit')
         .addTag('Health')
         .build(),

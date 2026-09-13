@@ -171,7 +171,10 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PATCH | `/academics/class-arms/:id` | `academics.update` |
 | DELETE | `/academics/class-arms/:id` | `academics.delete` |
 | POST | `/students` | `students.create` |
-| POST | `/students/bulk` | `students.create` |
+| GET | `/students/import/template` | `students.create` |
+| POST | `/students/import` | `students.create` |
+| POST | `/students/import/csv` | `students.create` |
+| POST | `/students/bulk` (deprecated) | `students.create` |
 | POST | `/students/promotions` | `students.update` |
 | GET | `/students` | `students.read` |
 | GET | `/students/:id` | `students.read` |
@@ -400,7 +403,11 @@ and status · guardians and student–guardian links · promotion and graduation
 - `Class.level` is unique per school because promotion walks it (level *n* → *n+1*).
 - Deleting is refused wherever a cascade would silently strip records.
 - Student counts are always filtered to `ACTIVE`, so withdrawing a student frees their place.
-- Bulk import is all-or-nothing; a partial import cannot be safely re-run.
+- Import reads a school's own spreadsheet: CSV from Excel (BOM, CRLF, quoted fields), loose headers
+  ("Surname", "Adm No", "Sex", "Class", "Parent Phone"), day-first dates, and classes by name.
+  Every row is checked and every problem reported before anything is written. `ATOMIC` (default)
+  writes all or nothing; `PARTIAL` writes the good rows; `dryRun` previews, admission numbers
+  included. Parents are matched by phone in any format, then email, and siblings share one record.
 
 ---
 

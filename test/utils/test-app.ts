@@ -1,8 +1,10 @@
 import { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { applyHttpSettings } from '../../src/http-settings';
 
 export interface TestContext {
   app: INestApplication;
@@ -16,10 +18,9 @@ export async function createTestApp(): Promise<TestContext> {
     imports: [AppModule],
   }).compile();
 
-  const app = moduleRef.createNestApplication();
-  app.setGlobalPrefix('api');
-  // Same proxy handling as production, so throttling keys off the forwarded IP.
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  // The same prefix, proxy handling and body limit as production.
+  applyHttpSettings(app, 'api');
   await app.init();
 
   const db = new PrismaClient({

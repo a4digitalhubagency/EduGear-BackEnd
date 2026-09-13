@@ -13,6 +13,7 @@ import {
   PromoteStudentsDto,
   PromotionResultDto,
 } from './dto/bulk.dto';
+import { ImportOptions, StudentImportService } from './student-import.service';
 import {
   AdmitStudentDto,
   ChangeStudentStatusDto,
@@ -55,6 +56,7 @@ export class StudentsService {
   constructor(
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly arms: ClassArmsService,
+    private readonly importer: StudentImportService,
   ) {}
 
   async admit(dto: AdmitStudentDto, schoolId: string): Promise<StudentDto> {
@@ -252,84 +254,28 @@ export class StudentsService {
   }
 
   /**
-   * Imports a whole intake in one transaction — all rows or none.
-   *
-   * Partial imports are worse than they look: re-running the fixed file would
-   * re-admit whatever already succeeded, and admission numbers make those
-   * duplicates hard to unpick. Failing the batch means the caller fixes the
-   * file and runs it again cleanly.
+   * The original all-or-nothing bulk endpoint. It now runs through the import
+   * pipeline — one implementation of the rules, not two — and returns the
+   * admitted students in the order they were sent.
    */
   async bulkAdmit(
     dto: BulkAdmitStudentsDto,
+    options: Omit<ImportOptions, 'mode' | 'dryRun'>,
     schoolId: string,
   ): Promise<BulkAdmitResultDto> {
-    const rows = dto.students;
+    const ids = await this.importer.legacyBulk(dto, options, schoolId);
 
-    rows.forEach((row, index) => {
-      try {
-        this.assertBornBeforeAdmission(
-          row.dateOfBirth ?? null,
-          row.admissionDate,
-        );
-      } catch {
-        throw AppException.badRequest(
-          `Row ${index + 1}: dateOfBirth must be before admissionDate`,
-          ErrorCode.VALIDATION_ERROR,
-        );
-      }
+    const rows = await this.prisma.student.findMany({
+      where: { id: { in: ids } },
+      include: WITH_ARM,
     });
+    const order = new Map(ids.map((id, index) => [id, index]));
+    rows.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
 
-    this.assertNoDuplicateNumbersWithin(rows);
-    await this.assertSuppliedNumbersFree(rows);
-    await this.assertArmsHaveRoom(rows);
-
-    const studentIds = await this.allocateNumbers(rows);
-
-    try {
-      const created = await this.prisma.$transaction(
-        rows.map((row, index) =>
-          this.prisma.student.create({
-            data: {
-              // Prisma's types require the tenant column on create. Supplying
-              // it is safe: the guard rejects any other tenant's id.
-              schoolId,
-              studentId: studentIds[index],
-              firstName: row.firstName,
-              lastName: row.lastName,
-              middleName: row.middleName ?? null,
-              gender: row.gender,
-              dateOfBirth: row.dateOfBirth ?? null,
-              email: row.email ?? null,
-              phone: row.phone ?? null,
-              addressLine: row.addressLine ?? null,
-              photoUrl: row.photoUrl ?? null,
-              admissionDate: row.admissionDate,
-              classArmId: row.classArmId ?? null,
-              bloodGroup: row.bloodGroup ?? null,
-              genotype: row.genotype ?? null,
-              stateOfOrigin: row.stateOfOrigin ?? null,
-              lga: row.lga ?? null,
-              nationality: row.nationality ?? 'Nigerian',
-              religion: row.religion ?? null,
-              notes: row.notes ?? null,
-            },
-            include: WITH_ARM,
-          }),
-        ),
-      );
-
-      return {
-        imported: created.length,
-        students: created.map((row) => this.toDto(row)),
-      };
-    } catch (error) {
-      if (this.isUniqueViolation(error)) {
-        throw AppException.conflict(
-          'An admission number in this batch was taken while importing. Nothing was imported — please retry.',
-        );
-      }
-      throw error;
-    }
+    return {
+      imported: rows.length,
+      students: rows.map((row) => this.toDto(row)),
+    };
   }
 
   /**
@@ -406,91 +352,6 @@ export class StudentsService {
       from,
       to,
     };
-  }
-
-  private assertNoDuplicateNumbersWithin(rows: AdmitStudentDto[]): void {
-    const seen = new Set<string>();
-
-    rows.forEach((row, index) => {
-      if (!row.studentId) return;
-      if (seen.has(row.studentId)) {
-        throw AppException.duplicate(
-          `Row ${index + 1}: admission number "${row.studentId}" appears twice in this batch`,
-        );
-      }
-      seen.add(row.studentId);
-    });
-  }
-
-  private async assertSuppliedNumbersFree(
-    rows: AdmitStudentDto[],
-  ): Promise<void> {
-    const supplied = rows
-      .map((row) => row.studentId)
-      .filter((id): id is string => Boolean(id));
-    if (supplied.length === 0) return;
-
-    const clashes = await this.prisma.student.findMany({
-      where: { studentId: { in: supplied } },
-      select: { studentId: true },
-    });
-
-    if (clashes.length > 0) {
-      throw AppException.duplicate(
-        `Admission number(s) already in use: ${clashes
-          .map((row) => row.studentId)
-          .join(', ')}`,
-      );
-    }
-  }
-
-  /** Capacity is per arm, so a batch is checked by how many it sends to each. */
-  private async assertArmsHaveRoom(rows: AdmitStudentDto[]): Promise<void> {
-    const incoming = new Map<string, number>();
-    for (const row of rows) {
-      if (!row.classArmId) continue;
-      incoming.set(row.classArmId, (incoming.get(row.classArmId) ?? 0) + 1);
-    }
-
-    for (const [armId, count] of incoming) {
-      await this.arms.assertHasRoom(armId, count);
-    }
-  }
-
-  /**
-   * Numbers are allocated once for the batch rather than per row, so a 200-row
-   * import does one read instead of 200.
-   */
-  private async allocateNumbers(rows: AdmitStudentDto[]): Promise<string[]> {
-    const years = new Set(
-      rows
-        .filter((row) => !row.studentId)
-        .map((row) => row.admissionDate.getUTCFullYear()),
-    );
-
-    const nextByYear = new Map<number, number>();
-    for (const year of years) {
-      const existing = await this.prisma.student.findMany({
-        where: { studentId: { startsWith: `${year}/` } },
-        select: { studentId: true },
-      });
-      nextByYear.set(
-        year,
-        nextSequence(
-          existing.map((row) => row.studentId),
-          year,
-        ),
-      );
-    }
-
-    return rows.map((row) => {
-      if (row.studentId) return row.studentId;
-
-      const year = row.admissionDate.getUTCFullYear();
-      const sequence = nextByYear.get(year) ?? 1;
-      nextByYear.set(year, sequence + 1);
-      return formatAdmissionNumber(year, sequence);
-    });
   }
 
   private buildWhere(query: QueryStudentsDto): Prisma.StudentWhereInput {
