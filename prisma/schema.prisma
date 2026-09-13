@@ -104,23 +104,32 @@ model School {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  roles             Role[]
-  memberships       Membership[]
-  academicSessions  AcademicSession[]
-  terms             Term[]
-  classes           Class[]
-  classArms         ClassArm[]
-  students          Student[]
-  guardians         Guardian[]
-  studentGuardians  StudentGuardian[]
-  auditLogs         AuditLog[]
-  feeCategories     FeeCategory[]
-  feeStructures     FeeStructure[]
-  feeStructureItems FeeStructureItem[]
-  studentFees       StudentFee[]
-  studentFeeItems   StudentFeeItem[]
-  payments          Payment[]
-  feeReminders      FeeReminder[]
+  roles                Role[]
+  memberships          Membership[]
+  academicSessions     AcademicSession[]
+  terms                Term[]
+  classes              Class[]
+  classArms            ClassArm[]
+  students             Student[]
+  guardians            Guardian[]
+  studentGuardians     StudentGuardian[]
+  auditLogs            AuditLog[]
+  feeCategories        FeeCategory[]
+  feeStructures        FeeStructure[]
+  feeStructureItems    FeeStructureItem[]
+  studentFees          StudentFee[]
+  studentFeeItems      StudentFeeItem[]
+  payments             Payment[]
+  feeReminders         FeeReminder[]
+  subjects             Subject[]
+  classSubjects        ClassSubject[]
+  teachingAssignments  TeachingAssignment[]
+  assessmentComponents AssessmentComponent[]
+  gradeBands           GradeBand[]
+  scores               Score[]
+  resultSheets         ResultSheet[]
+  studentResults       StudentResult[]
+  subjectResults       SubjectResult[]
 
   @@index([status])
   @@map("schools")
@@ -325,6 +334,8 @@ model Term {
   school        School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   session       AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   feeStructures FeeStructure[]
+  scores        Score[]
+  resultSheets  ResultSheet[]
 
   @@unique([sessionId, name])
   @@index([schoolId, isCurrent])
@@ -343,6 +354,7 @@ model Class {
   school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   arms          ClassArm[]
   feeStructures FeeStructure[]
+  classSubjects ClassSubject[]
 
   @@unique([schoolId, name])
   @@unique([schoolId, level])
@@ -362,9 +374,12 @@ model ClassArm {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  class    Class     @relation(fields: [classId], references: [id], onDelete: Cascade)
-  students Student[]
+  school              School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class               Class                @relation(fields: [classId], references: [id], onDelete: Cascade)
+  students            Student[]
+  teachingAssignments TeachingAssignment[]
+  scores              Score[]
+  resultSheets        ResultSheet[]
 
   @@unique([classId, name])
   @@index([schoolId])
@@ -402,12 +417,15 @@ model Student {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  school    School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  classArm  ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
-  guardians StudentGuardian[]
-  fees      StudentFee[]
-  payments  Payment[]
-  reminders FeeReminder[]
+  school         School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm       ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
+  guardians      StudentGuardian[]
+  fees           StudentFee[]
+  payments       Payment[]
+  reminders      FeeReminder[]
+  scores         Score[]
+  studentResults StudentResult[]
+  subjectResults SubjectResult[]
 
   @@unique([schoolId, studentId])
   @@index([schoolId, status])
@@ -719,4 +737,231 @@ model FeeReminder {
   @@index([schoolId, batchId])
   @@index([schoolId, createdAt])
   @@map("fee_reminders")
+}
+
+// ---------------------------------------------------------------------------
+// Results (Phase 3)
+//
+// Scores are the raw input; StudentResult and SubjectResult are what a result
+// sheet computes from them. Computing happens while the sheet is DRAFT; once
+// SUBMITTED the snapshot and the scores behind it are frozen, so what a
+// principal approves is exactly what parents are later shown.
+// ---------------------------------------------------------------------------
+
+enum ResultSheetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PUBLISHED
+}
+
+model Subject {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  /// Short code printed on report cards, e.g. "MTH".
+  code      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school              School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classSubjects       ClassSubject[]
+  teachingAssignments TeachingAssignment[]
+  scores              Score[]
+  subjectResults      SubjectResult[]
+
+  @@unique([schoolId, name])
+  @@unique([schoolId, code])
+  @@index([schoolId, isActive])
+  @@map("subjects")
+}
+
+/// Which subjects a class offers.
+model ClassSubject {
+  id           String   @id @default(uuid()) @db.Uuid
+  schoolId     String   @db.Uuid
+  classId      String   @db.Uuid
+  subjectId    String   @db.Uuid
+  /// Electives count only for students with scores in them.
+  isCompulsory Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@unique([classId, subjectId])
+  @@index([schoolId])
+  @@map("class_subjects")
+}
+
+/// Who teaches a subject to an arm — and therefore who may enter its scores.
+model TeachingAssignment {
+  id                  String   @id @default(uuid()) @db.Uuid
+  schoolId            String   @db.Uuid
+  classArmId          String   @db.Uuid
+  subjectId           String   @db.Uuid
+  /// A membership id with no foreign key, like ClassArm.formTeacherId, so staff
+  /// leaving does not take the assignment history with them.
+  teacherMembershipId String   @db.Uuid
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm ClassArm @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subject  Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([classArmId, subjectId])
+  @@index([schoolId, teacherMembershipId])
+  @@map("teaching_assignments")
+}
+
+/// One part of a subject's mark, e.g. "1st CA" out of 10 or "Exam" out of 70.
+model AssessmentComponent {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  maxScore  Int
+  sortOrder Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  scores Score[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("assessment_components")
+}
+
+model GradeBand {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @db.Uuid
+  grade     String
+  minScore  Int
+  maxScore  Int
+  remark    String
+  isPass    Boolean
+  createdAt DateTime @default(now())
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, grade])
+  @@index([schoolId])
+  @@map("grade_bands")
+}
+
+model Score {
+  id                    String   @id @default(uuid()) @db.Uuid
+  schoolId              String   @db.Uuid
+  studentId             String   @db.Uuid
+  subjectId             String   @db.Uuid
+  termId                String   @db.Uuid
+  componentId           String   @db.Uuid
+  /// The arm the student was in when scored — they may be promoted later.
+  classArmId            String   @db.Uuid
+  score                 Decimal  @db.Decimal(5, 2)
+  enteredByMembershipId String?  @db.Uuid
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  school    School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student   Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject   Subject             @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  term      Term                @relation(fields: [termId], references: [id], onDelete: Restrict)
+  component AssessmentComponent @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  classArm  ClassArm            @relation(fields: [classArmId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, subjectId, termId, componentId])
+  @@index([schoolId, classArmId, subjectId, termId])
+  @@map("scores")
+}
+
+/// A class arm's results for a term, and where they are in the approval flow.
+model ResultSheet {
+  id                      String            @id @default(uuid()) @db.Uuid
+  schoolId                String            @db.Uuid
+  classArmId              String            @db.Uuid
+  termId                  String            @db.Uuid
+  status                  ResultSheetStatus @default(DRAFT)
+  computedAt              DateTime?
+  /// Set on every score save; later than computedAt means the snapshot is stale.
+  scoresChangedAt         DateTime?
+  submittedAt             DateTime?
+  submittedByMembershipId String?           @db.Uuid
+  approvedAt              DateTime?
+  approvedByMembershipId  String?           @db.Uuid
+  publishedAt             DateTime?
+  publishedByMembershipId String?           @db.Uuid
+  /// Why it was last sent back to DRAFT.
+  returnedReason          String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  school         School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm       ClassArm        @relation(fields: [classArmId], references: [id], onDelete: Restrict)
+  term           Term            @relation(fields: [termId], references: [id], onDelete: Restrict)
+  studentResults StudentResult[]
+  subjectResults SubjectResult[]
+
+  @@unique([classArmId, termId])
+  @@index([schoolId, status])
+  @@index([schoolId, termId])
+  @@map("result_sheets")
+}
+
+model StudentResult {
+  id                 String   @id @default(uuid()) @db.Uuid
+  schoolId           String   @db.Uuid
+  resultSheetId      String   @db.Uuid
+  studentId          String   @db.Uuid
+  totalScore         Decimal  @db.Decimal(7, 2)
+  averageScore       Decimal  @db.Decimal(5, 2)
+  /// Null for a student taking no subjects.
+  position           Int?
+  subjectCount       Int
+  formTeacherComment String?
+  principalComment   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  school      School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  resultSheet ResultSheet @relation(fields: [resultSheetId], references: [id], onDelete: Cascade)
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([resultSheetId, studentId])
+  @@index([schoolId, studentId])
+  @@map("student_results")
+}
+
+/// One subject line on a report card, with the class figures printed beside it.
+model SubjectResult {
+  id              String   @id @default(uuid()) @db.Uuid
+  schoolId        String   @db.Uuid
+  resultSheetId   String   @db.Uuid
+  studentId       String   @db.Uuid
+  subjectId       String   @db.Uuid
+  /// Copied, so renaming a subject never rewrites a published report card.
+  subjectName     String
+  totalScore      Decimal  @db.Decimal(5, 2)
+  grade           String?
+  remark          String?
+  isPass          Boolean
+  position        Int
+  /// [{ name, maxScore, score }] as computed, in scheme order.
+  componentScores Json
+  classHighest    Decimal  @db.Decimal(5, 2)
+  classLowest     Decimal  @db.Decimal(5, 2)
+  classAverage    Decimal  @db.Decimal(5, 2)
+  createdAt       DateTime @default(now())
+
+  school      School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  resultSheet ResultSheet @relation(fields: [resultSheetId], references: [id], onDelete: Cascade)
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject     Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@unique([resultSheetId, studentId, subjectId])
+  @@index([schoolId, studentId])
+  @@map("subject_results")
 }

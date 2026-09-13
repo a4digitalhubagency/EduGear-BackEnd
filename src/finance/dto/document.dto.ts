@@ -1,17 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethod, PaymentStatus, StudentFeeStatus } from '@prisma/client';
 import { IsOptional, IsUUID } from 'class-validator';
-
-export class SchoolLetterheadDto {
-  @ApiProperty() name: string;
-  @ApiPropertyOptional({ nullable: true }) addressLine: string | null;
-  @ApiPropertyOptional({ nullable: true }) city: string | null;
-  @ApiPropertyOptional({ nullable: true }) state: string | null;
-  @ApiPropertyOptional({ nullable: true }) phone: string | null;
-  @ApiProperty() email: string;
-  @ApiPropertyOptional({ nullable: true }) logoUrl: string | null;
-  @ApiPropertyOptional({ nullable: true }) motto: string | null;
-}
+import { SchoolLetterheadDto } from '../../tenants/dto/letterhead.dto';
 
 export class DocumentStudentDto {
   @ApiProperty() id: string;

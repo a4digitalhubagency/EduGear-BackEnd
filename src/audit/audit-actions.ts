@@ -75,7 +75,20 @@ export const AUDIT_ACTIONS = {
   PAYMENT_REJECTED: 'payment.rejected',
   PAYMENT_REMINDERS_SENT: 'payment.reminders_sent',
   RESULT_CREATED: 'result.created',
+  RESULT_SUBMITTED: 'result.submitted',
+  RESULT_APPROVED: 'result.approved',
   RESULT_PUBLISHED: 'result.published',
+  RESULT_RETURNED: 'result.returned',
+  SCORES_SAVED: 'scores.saved',
+  SUBJECT_CREATED: 'subject.created',
+  SUBJECT_UPDATED: 'subject.updated',
+  SUBJECT_DELETED: 'subject.deleted',
+  CLASS_SUBJECT_ADDED: 'class_subject.added',
+  CLASS_SUBJECT_REMOVED: 'class_subject.removed',
+  TEACHER_ASSIGNED: 'teacher.assigned',
+  TEACHER_UNASSIGNED: 'teacher.unassigned',
+  ASSESSMENT_SCHEME_UPDATED: 'assessment_scheme.updated',
+  GRADING_SCALE_UPDATED: 'grading_scale.updated',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

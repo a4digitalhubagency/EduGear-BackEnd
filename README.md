@@ -2,10 +2,11 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phases 0, 1 and 2 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit),
-Student Management (sessions, terms, classes, arms, students, guardians, promotion, bulk import) and
-Finance (fee structures, invoicing, payments with verification, debtors, reminders) are live.
-Results, Parent Portal and Administration are not built yet.
+**Status: Phases 0–3 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit), Student
+Management (sessions, terms, classes, arms, students, guardians, promotion, spreadsheet import),
+Finance (fee structures, invoicing, verified payments, receipts, statements, debtors, reminders) and
+Results (subjects, assessment, scores, computation, approval, report cards) are live. Parent Portal
+and Administration are next.
 
 ---
 
@@ -218,6 +219,25 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/finance/reports/debtors` | `finance.read` |
 | POST | `/finance/reminders` | `finance.update` |
 | GET | `/finance/reminders` | `finance.read` |
+| POST | `/results/subjects` | `academics.create` |
+| GET | `/results/subjects` | `academics.read` |
+| GET / PATCH / DELETE | `/results/subjects/:id` | `academics.read` / `update` / `delete` |
+| GET / POST | `/results/classes/:classId/subjects` | `academics.read` / `update` |
+| PATCH / DELETE | `/results/classes/:classId/subjects/:subjectId` | `academics.update` |
+| PUT / DELETE | `/results/class-arms/:classArmId/subjects/:subjectId/teacher` | `academics.update` |
+| GET | `/results/teaching-assignments` | `results.read` |
+| GET / PUT | `/results/assessment-scheme` | `results.read` / `results.publish` |
+| GET / PUT | `/results/grading-scale` | `results.read` / `results.publish` |
+| POST | `/results/setup-defaults` | `results.publish` |
+| GET | `/results/scores` | `results.read` |
+| PUT | `/results/scores` | `results.create` + assigned teacher |
+| POST | `/results/sheets/compute` | `results.update` + form teacher |
+| GET | `/results/sheets`, `/results/sheets/:id` | `results.read` |
+| POST | `/results/sheets/:id/submit` | `results.update` + form teacher |
+| POST | `/results/sheets/:id/approve`, `/publish`, `/return` | `results.publish` |
+| PATCH | `/results/sheets/:id/students/:studentId/comment` | `results.update` |
+| GET | `/results/sheets/:id/report-cards` | `results.read` |
+| GET | `/results/report-cards/:studentId?termId=` | `results.read` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -385,7 +405,8 @@ src/
   academics/       academic sessions, terms, classes and class arms
   students/        admission, profiles, search and status
   guardians/       guardian records and student links
-  finance/         fee structures, invoices, payments, reports, reminders
+  finance/         fee structures, invoices, payments, receipts, reports, reminders
+  results/         subjects, assessment, scores, result sheets, report cards
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console)
   health/          liveness, database and cache readiness
@@ -441,4 +462,22 @@ The rules that make the numbers trustworthy:
   Delivery uses Resend's batch API with idempotency keys. Families with no email come back with
   phone numbers so the bursar can call.
 
-Next: **Phase 3 — Results.** Its models are deliberately not in the schema yet.
+---
+
+## What Phase 3 delivered
+
+Subjects and what each class offers · subject-teacher assignments · an assessment scheme and grading
+scale (with the 3 × CA + exam and WAEC A1–F9 defaults) · score entry · computed results with subject
+and class positions · a DRAFT → SUBMITTED → APPROVED → PUBLISHED flow · report cards.
+
+- **Scores belong to the assigned subject teacher**, a class's sheet to its form teacher. Every
+  teacher holds `results.create`/`update`, so the permission alone would let any teacher touch any
+  class; holders of `results.publish` (the principal) may act anywhere.
+- **The computation is a pure function** (`compute-results.ts`) with the rules pinned in tests:
+  averages over subjects taken (electives count only for takers), competition ranking with ties
+  ("1st, 2nd, 2nd, 4th"), grades reached by whole marks and never rounded up.
+- **Submitting refuses any missing score** and freezes the scores. What the principal approves is
+  the stored snapshot, and it is exactly what the report card prints — cards are never recomputed on
+  read. A published sheet can be returned to draft with a reason.
+- The scheme's marks freeze once scores exist (renames still allowed); grading changes never touch a
+  published card. Terms, arms, students and subjects with results refuse deletion.

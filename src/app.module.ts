@@ -27,6 +27,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FinanceModule } from './finance/finance.module';
 import { GuardiansModule } from './guardians/guardians.module';
+import { ResultsModule } from './results/results.module';
 import { StudentsModule } from './students/students.module';
 import { UsersModule } from './users/users.module';
 
@@ -113,6 +114,7 @@ import { UsersModule } from './users/users.module';
     StudentsModule,
     GuardiansModule,
     FinanceModule,
+    ResultsModule,
     HealthModule,
   ],
   providers: [

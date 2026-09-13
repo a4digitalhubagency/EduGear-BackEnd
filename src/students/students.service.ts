@@ -240,13 +240,21 @@ export class StudentsService {
     // Invoices and payments cascade from the student at the database level,
     // so deleting an invoiced student would erase money history. A status
     // change keeps the record and takes the student off every roll.
-    const [invoices, payments] = await Promise.all([
+    const [invoices, payments, scores, results] = await Promise.all([
       this.prisma.studentFee.count({ where: { studentId: id } }),
       this.prisma.payment.count({ where: { studentId: id } }),
+      this.prisma.score.count({ where: { studentId: id } }),
+      this.prisma.studentResult.count({ where: { studentId: id } }),
     ]);
     if (invoices > 0 || payments > 0) {
       throw AppException.conflict(
         'This student has financial records and cannot be deleted. Change their status to WITHDRAWN or TRANSFERRED instead.',
+      );
+    }
+    // Scores and results cascade from the student too — an academic record.
+    if (scores > 0 || results > 0) {
+      throw AppException.conflict(
+        'This student has scores or results and cannot be deleted. Change their status to WITHDRAWN or TRANSFERRED instead.',
       );
     }
 

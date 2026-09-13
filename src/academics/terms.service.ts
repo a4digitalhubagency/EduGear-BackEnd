@@ -174,6 +174,16 @@ export class TermsService {
 
     await this.assertNoFeeStructures({ termId: id }, 'term');
 
+    const [scores, sheets] = await Promise.all([
+      this.prisma.score.count({ where: { termId: id } }),
+      this.prisma.resultSheet.count({ where: { termId: id } }),
+    ]);
+    if (scores > 0 || sheets > 0) {
+      throw AppException.conflict(
+        'Scores or results have been recorded for this term, so it cannot be deleted',
+      );
+    }
+
     await this.prisma.term.delete({ where: { id } });
   }
 

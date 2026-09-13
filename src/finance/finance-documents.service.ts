@@ -1,14 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PaymentStatus, Prisma, StudentFeeStatus } from '@prisma/client';
-import { RequestContext } from '../common/context/request-context';
 import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
+import { LetterheadService } from '../tenants/letterhead.service';
 import { amountInWords } from './amount-in-words';
 import {
   DocumentStudentDto,
   ReceiptDto,
-  SchoolLetterheadDto,
   StatementDto,
   StatementQueryDto,
 } from './dto/document.dto';
@@ -36,7 +35,10 @@ type StudentSummary = Prisma.StudentGetPayload<{
  */
 @Injectable()
 export class FinanceDocumentsService {
-  constructor(@InjectPrisma() private readonly prisma: TenantAwarePrisma) {}
+  constructor(
+    @InjectPrisma() private readonly prisma: TenantAwarePrisma,
+    private readonly letterheads: LetterheadService,
+  ) {}
 
   async receipt(paymentId: string): Promise<ReceiptDto> {
     const payment = await this.prisma.payment.findUnique({
@@ -92,7 +94,7 @@ export class FinanceDocumentsService {
     return {
       receiptNumber: payment.receiptNumber,
       issuedAt: payment.verifiedAt,
-      school: await this.letterhead(),
+      school: await this.letterheads.current(),
       student: this.studentDto(payment.student),
       invoiceId: invoice.id,
       feeDescription: `${structure.name} (${period})`,
@@ -152,7 +154,7 @@ export class FinanceDocumentsService {
       .map((entry) => entry.credit);
 
     return {
-      school: await this.letterhead(),
+      school: await this.letterheads.current(),
       student: this.studentDto(student),
       generatedAt: new Date(),
       totalBilled: toAmount(sum(live.map((invoice) => invoice.totalAmount))),
@@ -203,28 +205,6 @@ export class FinanceDocumentsService {
         paidAt: row.paidAt,
         rejectionReason: row.rejectionReason,
       })),
-    };
-  }
-
-  private async letterhead(): Promise<SchoolLetterheadDto> {
-    const schoolId = RequestContext.getTenantId();
-    const school = schoolId
-      ? await this.prisma.school.findUnique({ where: { id: schoolId } })
-      : null;
-
-    if (!school) {
-      throw AppException.notFound('School');
-    }
-
-    return {
-      name: school.name,
-      addressLine: school.addressLine,
-      city: school.city,
-      state: school.state,
-      phone: school.phone,
-      email: school.email,
-      logoUrl: school.logoUrl,
-      motto: school.motto,
     };
   }
 

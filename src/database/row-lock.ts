@@ -19,6 +19,7 @@ import { TxClient } from './prisma.service';
 const LOCKABLE_TABLES = {
   classArm: 'class_arms',
   studentFee: 'student_fees',
+  resultSheet: 'result_sheets',
 } as const;
 
 export type LockableModel = keyof typeof LOCKABLE_TABLES;
