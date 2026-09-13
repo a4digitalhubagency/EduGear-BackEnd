@@ -209,6 +209,8 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/finance/payments/:id` | `finance.read` |
 | POST | `/finance/payments/:id/verify` | `finance.verify` |
 | POST | `/finance/payments/:id/reject` | `finance.verify` |
+| GET | `/finance/payments/:id/receipt` | `finance.read` |
+| GET | `/finance/students/:studentId/statement` | `finance.read` |
 | GET | `/finance/reports/summary` | `finance.read` |
 | GET | `/finance/reports/debtors` | `finance.read` |
 | POST | `/finance/reminders` | `finance.update` |

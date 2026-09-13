@@ -4,6 +4,8 @@ import { FeeCategoriesController } from './fee-categories.controller';
 import { FeeCategoriesService } from './fee-categories.service';
 import { FeeStructuresController } from './fee-structures.controller';
 import { FeeStructuresService } from './fee-structures.service';
+import { FinanceDocumentsController } from './finance-documents.controller';
+import { FinanceDocumentsService } from './finance-documents.service';
 import { FinanceReportsController } from './finance-reports.controller';
 import { FinanceReportsService } from './finance-reports.service';
 import { PaymentRemindersService } from './payment-reminders.service';
@@ -20,6 +22,7 @@ import { StudentFeesService } from './student-fees.service';
     StudentFeesController,
     PaymentsController,
     FinanceReportsController,
+    FinanceDocumentsController,
   ],
   providers: [
     FeeCategoriesService,
@@ -28,7 +31,14 @@ import { StudentFeesService } from './student-fees.service';
     PaymentsService,
     FinanceReportsService,
     PaymentRemindersService,
+    FinanceDocumentsService,
   ],
-  exports: [FeeCategoriesService, FeeStructuresService, StudentFeesService],
+  exports: [
+    FeeCategoriesService,
+    FeeStructuresService,
+    StudentFeesService,
+    PaymentsService,
+    FinanceDocumentsService,
+  ],
 })
 export class FinanceModule {}
