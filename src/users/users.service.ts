@@ -102,6 +102,48 @@ export class UsersService {
    * multi-school case the membership model exists for.
    */
   async invite(dto: InviteUserDto, auth: AuthContext): Promise<StaffMemberDto> {
+    const { user, membership, role, token } = await this.createInvitation(
+      dto,
+      auth,
+    );
+
+    const school = await this.prisma.school.findFirst({
+      where: { id: auth.schoolId },
+    });
+
+    await this.email.sendStaffInvitation({
+      to: user.email,
+      firstName: user.firstName,
+      schoolName: school?.name ?? 'your school',
+      roleName: role.name,
+      token,
+    });
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.USER_INVITED,
+      entityType: 'Membership',
+      entityId: membership.id,
+      description: `${user.email} invited as ${role.name}`,
+      metadata: { email: user.email, roleSlug: role.slug },
+    });
+
+    return this.toDto(membership);
+  }
+
+  /**
+   * The part of an invitation every kind of invitee shares: a user (reused if
+   * the email already has an EduGear account elsewhere), an INVITED membership
+   * in this school, and a single-use token for /users/accept-invitation. Staff
+   * and parent invitations differ only in the email and audit that follow.
+   */
+  async createInvitation(
+    dto: Pick<
+      InviteUserDto,
+      'email' | 'firstName' | 'lastName' | 'phone' | 'roleId' | 'staffId'
+    >,
+    auth: AuthContext,
+    extraMetadata: Record<string, string> = {},
+  ) {
     const role = await this.prisma.role.findFirst({
       where: { id: dto.roleId },
     });
@@ -118,12 +160,16 @@ export class UsersService {
       const existingMembership = await this.prisma.membership.findFirst({
         where: { userId: existingUser.id },
       });
-      if (
-        existingMembership &&
-        existingMembership.status !== MembershipStatus.REVOKED
-      ) {
+      // INVITED is a resend — the first email went to spam, or expired — and
+      // REVOKED a re-invitation. Only live access blocks a new invitation.
+      if (existingMembership?.status === MembershipStatus.ACTIVE) {
         throw AppException.duplicate(
           'This person already has access to this school',
+        );
+      }
+      if (existingMembership?.status === MembershipStatus.SUSPENDED) {
+        throw AppException.conflict(
+          "This person's access is suspended. Reactivate it rather than inviting them again.",
         );
       }
     }
@@ -167,35 +213,34 @@ export class UsersService {
       include: { user: true, role: true },
     });
 
+    // Only the newest link works. Scoped to this membership: the same person
+    // may hold a pending invitation from another school.
+    await this.prisma.verificationToken.updateMany({
+      where: {
+        userId: user.id,
+        type: VerificationTokenType.INVITATION,
+        consumedAt: null,
+        metadata: { path: ['membershipId'], equals: membership.id },
+      },
+      data: { consumedAt: new Date() },
+    });
+
     const { invitationTtlHours } = this.config.get('auth', { infer: true });
     const { raw } = await this.tokens.createVerificationToken({
       userId: user.id,
       type: VerificationTokenType.INVITATION,
       ttlMs: this.tokens.ttlHours(invitationTtlHours),
-      metadata: { membershipId: membership.id, schoolId: auth.schoolId },
+      metadata: {
+        membershipId: membership.id,
+        schoolId: auth.schoolId,
+        ...extraMetadata,
+      },
     });
 
-    const school = await this.prisma.school.findFirst({
-      where: { id: auth.schoolId },
-    });
+    // A re-invitation after revocation must not be served a cached snapshot.
+    await this.accessControl.invalidateMembership(membership.id);
 
-    await this.email.sendStaffInvitation({
-      to: user.email,
-      firstName: user.firstName,
-      schoolName: school?.name ?? 'your school',
-      roleName: role.name,
-      token: raw,
-    });
-
-    await this.audit.record({
-      action: AUDIT_ACTIONS.USER_INVITED,
-      entityType: 'Membership',
-      entityId: membership.id,
-      description: `${user.email} invited as ${role.name}`,
-      metadata: { email: user.email, roleSlug: role.slug },
-    });
-
-    return this.toDto(membership);
+    return { user, membership, role, token: raw };
   }
 
   /**

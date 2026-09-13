@@ -125,13 +125,14 @@ export class ClassArmsService {
 
     // Former students' results still name this arm — a graduated class's
     // report cards must keep saying which arm they were in.
-    const [scores, sheets] = await Promise.all([
+    const [scores, sheets, registers] = await Promise.all([
       this.prisma.score.count({ where: { classArmId: id } }),
       this.prisma.resultSheet.count({ where: { classArmId: id } }),
+      this.prisma.attendanceRecord.count({ where: { classArmId: id } }),
     ]);
-    if (scores > 0 || sheets > 0) {
+    if (scores > 0 || sheets > 0 || registers > 0) {
       throw AppException.conflict(
-        'Results have been recorded for this arm, so it cannot be deleted',
+        'Results or attendance have been recorded for this arm, so it cannot be deleted',
       );
     }
 

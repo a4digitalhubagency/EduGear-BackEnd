@@ -4,6 +4,15 @@ import { Resend } from 'resend';
 import { AppConfig } from '../config/configuration';
 import { EmailProvider } from '../config/env.validation';
 
+/** Names are data, not markup: a school called "<b>" must not render as bold. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /** Resend's per-call maximum for the batch endpoint. */
 export const EMAIL_BATCH_SIZE = 100;
 
@@ -187,8 +196,35 @@ export class EmailService implements OnModuleInit {
       text: `Hi ${params.firstName},\n\nYou have been invited to join ${params.schoolName} on EduGear as ${params.roleName}.\nAccept the invitation here:\n${url}`,
       html: this.layout(
         `Hi ${params.firstName},`,
-        `You have been invited to join <strong>${params.schoolName}</strong> on EduGear as <strong>${params.roleName}</strong>.`,
+        `You have been invited to join <strong>${escapeHtml(params.schoolName)}</strong> on EduGear as <strong>${escapeHtml(params.roleName)}</strong>.`,
         'Accept invitation',
+        url,
+      ),
+    });
+  }
+
+  async sendParentInvitation(params: {
+    to: string;
+    firstName: string;
+    schoolName: string;
+    children: string[];
+    token: string;
+  }): Promise<void> {
+    const url = `${this.frontendUrl()}/accept-invitation?token=${encodeURIComponent(params.token)}`;
+    const children =
+      params.children.length > 0 ? params.children.join(', ') : 'your child';
+    await this.send({
+      to: params.to,
+      subject: `${params.schoolName}: your parent portal login`,
+      text:
+        `Hi ${params.firstName},\n\n${params.schoolName} has set up a parent portal login for you on EduGear. ` +
+        `You can see ${children}'s results, fees, payments and attendance, and send proof of payment to the school.\n` +
+        `Set your password here:\n${url}`,
+      html: this.layout(
+        `Hi ${params.firstName},`,
+        `<strong>${escapeHtml(params.schoolName)}</strong> has set up a parent portal login for you on EduGear. ` +
+          `You can see ${escapeHtml(children)}'s results, fees, payments and attendance, and send proof of payment to the school.`,
+        'Set your password',
         url,
       ),
     });
@@ -207,7 +243,7 @@ export class EmailService implements OnModuleInit {
     ctaUrl: string,
   ): string {
     return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.6">
-  <p>${greeting}</p>
+  <p>${escapeHtml(greeting)}</p>
   <p>${body}</p>
   <p><a href="${ctaUrl}" style="display:inline-block;padding:12px 20px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px">${ctaLabel}</a></p>
   <p style="font-size:12px;color:#666">If the button does not work, paste this link into your browser:<br>${ctaUrl}</p>

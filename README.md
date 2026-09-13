@@ -2,11 +2,11 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phases 0–3 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit), Student
+**Status: Phases 0–4 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit), Student
 Management (sessions, terms, classes, arms, students, guardians, promotion, spreadsheet import),
-Finance (fee structures, invoicing, verified payments, receipts, statements, debtors, reminders) and
-Results (subjects, assessment, scores, computation, approval, report cards) are live. Parent Portal
-and Administration are next.
+Finance (fee structures, invoicing, verified payments, receipts, statements, debtors, reminders),
+Results (subjects, assessment, scores, computation, approval, report cards), attendance and the
+Parent Portal are live. Administration is next.
 
 ---
 
@@ -238,6 +238,15 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PATCH | `/results/sheets/:id/students/:studentId/comment` | `results.update` |
 | GET | `/results/sheets/:id/report-cards` | `results.read` |
 | GET | `/results/report-cards/:studentId?termId=` | `results.read` |
+| GET / PUT | `/attendance/register` | `attendance.read` / `create` + form teacher |
+| GET | `/attendance/summary`, `/attendance/students/:studentId` | `attendance.read` |
+| GET / POST / DELETE | `/guardians/:guardianId/portal-access` | `guardians.read` / `update` |
+| GET | `/portal/me`, `/portal/children`, `/portal/children/:studentId` | `portal.access` + own child |
+| GET | `/portal/children/:studentId/fees` · `/results` · `/results/:termId` · `/attendance` | `portal.access` + own child |
+| GET | `/portal/children/:studentId/payments/:paymentId/receipt` | `portal.access` + own child |
+| POST | `/portal/children/:studentId/payments` | `portal.access` + own child |
+| GET | `/portal/notifications` | `portal.access` |
+| POST | `/portal/notifications/:id/read`, `/portal/notifications/read-all` | `portal.access` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -407,8 +416,10 @@ src/
   guardians/       guardian records and student links
   finance/         fee structures, invoices, payments, receipts, reports, reminders
   results/         subjects, assessment, scores, result sheets, report cards
+  attendance/      daily registers and term summaries
+  portal/          parent logins and the parent-facing API
   audit/           audit service + trail endpoint
-  notifications/   email (Resend / console)
+  notifications/   email (Resend / console) and the in-app inbox
   health/          liveness, database and cache readiness
 test/              integration suites + helpers
 ```
@@ -481,3 +492,36 @@ and class positions · a DRAFT → SUBMITTED → APPROVED → PUBLISHED flow · 
   read. A published sheet can be returned to draft with a reason.
 - The scheme's marks freeze once scores exist (renames still allowed); grading changes never touch a
   published card. Terms, arms, students and subjects with results refuse deletion.
+
+---
+
+## What Phase 4 delivered
+
+Parent logins · a parent-facing API for children, fees, receipts, results and attendance · proof of
+payment from parents · an in-app notification inbox · the daily attendance register it all reads.
+
+- **A parent is invited exactly as staff are** — same user, same single-use token, same
+  `/users/accept-invitation` — into the school's PARENT role, whose only permission is
+  `portal.access`. Staff hold every permission *except* that one, so staff tokens are refused by the
+  portal and parent tokens by everything else.
+- **Which children a parent sees is decided per request from their guardian links.** The tenant
+  guard cannot do this — both families are in the same school — so every child route checks the link
+  first, and another family's child is a 404, never a 403, so the portal never confirms a child
+  exists. This rule is mutation-tested.
+- **Proof of payment from a parent lands PENDING** and moves nothing until the bursar verifies it,
+  which is the survey's unverified-receipt problem handled at the source. Cash is refused: it is paid
+  at the office.
+- **Results are invisible until PUBLISHED.** Draft, submitted and approved sheets are simply absent.
+- **Notifications** are written for invoices, verified and rejected payments, fee reminders and
+  published results — only to parents with an active login, resolved at send time. Like the audit log
+  they are a side effect: a failure is logged, never allowed to undo the event.
+- **Attendance** is taken by the form teacher (or academic staff), for a school day inside a term and
+  never a future one. Late counts as present and excused as absent on the report card, which now
+  prints it.
+- Re-sending an invitation retires the earlier link — for staff too, who previously could not be
+  re-invited while an invitation was pending.
+
+Known limit: a membership has one role per school, so a teacher who is also a parent at the same
+school cannot hold both logins. Parents at a *different* school than they work at are fine.
+
+Next: **Phase 5 — Administration.**

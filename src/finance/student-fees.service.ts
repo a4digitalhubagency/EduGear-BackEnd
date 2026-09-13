@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  NotificationType,
   PaymentStatus,
   Prisma,
   StudentFee,
@@ -12,6 +13,7 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRow } from '../database/row-lock';
+import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
 import {
   AssignFeeDto,
   AssignFeeResultDto,
@@ -29,6 +31,7 @@ import {
   toAmount,
 } from './fee-math';
 import { FeeStructuresService } from './fee-structures.service';
+import { naira } from './naira';
 
 const WITH_DETAIL = {
   student: {
@@ -50,6 +53,7 @@ export class StudentFeesService {
   constructor(
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly structures: FeeStructuresService,
+    private readonly notifications: InAppNotificationsService,
   ) {}
 
   /**
@@ -130,11 +134,24 @@ export class StudentFeesService {
       include: WITH_DETAIL,
     });
 
+    const dtos = invoices.map((row) => this.toDto(row));
+    await this.notifications.notifyParentsOf(
+      dtos.map((invoice) => ({
+        studentId: invoice.studentId,
+        draft: {
+          type: NotificationType.INVOICE_ISSUED,
+          title: `New invoice: ${invoice.structureName}`,
+          body: `${naira(invoice.payableAmount)} is due for ${invoice.studentName}${invoice.dueDate ? ` by ${invoice.dueDate.toISOString().slice(0, 10)}` : ''}.`,
+          data: { invoiceId: invoice.id },
+        },
+      })),
+    );
+
     return {
       assigned: created.length,
       skipped: students.length - targets.length,
       totalBilled: toAmount(total.mul(created.length)),
-      invoices: invoices.map((row) => this.toDto(row)),
+      invoices: dtos,
     };
   }
 

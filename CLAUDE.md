@@ -129,11 +129,10 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 ## Status
 
-Phases 0, 1 and 2 are complete. **Phase 3 (Results) is next** — its models are deliberately absent
-from the schema, so it starts with a migration. Do not skip ahead to Portal or Administration.
+Phases 0–4 are complete. **Phase 5 (Administration) is next.**
 
-Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/)
-and [src/finance/](src/finance/): pure domain rules in their own file with a `*.spec.ts`, a service
+Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/),
+[src/finance/](src/finance/) and [src/results/](src/results/): pure domain rules in their own file with a `*.spec.ts`, a service
 holding the Prisma work, a thin controller that declares `@RequirePermissions` and records the audit
 entry, and an `*.e2e-spec.ts` covering the rules, the permission boundary and cross-tenant access.
 
@@ -167,3 +166,26 @@ Conventions established across Phases 1 and 2, worth following:
 - **An issued invoice is immutable.** Line items are copied onto it at assignment; structure amounts
   are frozen once invoices exist. Retire a category or archive a structure instead of editing it.
 - Waived and cancelled invoices are never counted as debts.
+
+### Scoping beyond permissions (Phases 3–4)
+
+Some roles hold a permission more broadly than the job allows, so a few rules are enforced in services
+on top of `@RequirePermissions`:
+
+- **Scores** — only the teacher assigned to that subject in that arm (`TeachingAssignment`), or a
+  holder of `results.publish`. **Computing / submitting a sheet and taking a register** — only the
+  arm's form teacher, or a head. See [results-access.service.ts](src/results/results-access.service.ts).
+- **Parent portal** — every child route calls `assertWard` before anything else; another family's
+  child is a 404. The tenant guard cannot enforce this because both families share a school.
+
+### Side effects
+
+Audit entries and in-app notifications are written after the business change commits and never throw.
+Emit a notification with `InAppNotificationsService.notifyParentsOf` — it resolves portal parents at
+send time.
+
+### Locks
+
+`lockRow(tx, 'studentFee' | 'classArm' | 'resultSheet', id)` in
+[row-lock.ts](src/database/row-lock.ts). Take it at the start of any transaction whose check guards
+its write — capacity, overpayment, a sheet's DRAFT status. `lockRows` sorts ids to avoid deadlock.

@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, ResultSheetStatus, StudentStatus } from '@prisma/client';
+import {
+  NotificationType,
+  Prisma,
+  ResultSheetStatus,
+  StudentStatus,
+} from '@prisma/client';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRow } from '../database/row-lock';
+import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
 import { ComputeResult, computeResults } from './compute-results';
 import {
   ComputeSheetDto,
@@ -48,6 +54,7 @@ export class ResultSheetsService {
   constructor(
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly access: ResultsAccessService,
+    private readonly notifications: InAppNotificationsService,
   ) {}
 
   async compute(
@@ -141,7 +148,7 @@ export class ResultSheetsService {
     return this.detail(id);
   }
 
-  /** Makes the results visible to parents. */
+  /** Makes the results visible to parents, and tells the ones with a portal login. */
   async publish(id: string): Promise<ResultSheetDto> {
     const actor = await this.access.assertHead('publish results');
     await this.transition(id, ResultSheetStatus.APPROVED, 'published', {
@@ -149,7 +156,20 @@ export class ResultSheetsService {
       publishedAt: new Date(),
       publishedByMembershipId: actor.membershipId,
     });
-    return this.detail(id);
+
+    const sheet = await this.detail(id);
+    await this.notifications.notifyParentsOf(
+      sheet.students.map((student) => ({
+        studentId: student.studentId,
+        draft: {
+          type: NotificationType.RESULT_PUBLISHED,
+          title: `${sheet.termName.charAt(0)}${sheet.termName.slice(1).toLowerCase()} term results are out`,
+          body: `${student.studentName}'s ${sheet.className} report card for ${sheet.sessionName} is ready to view.`,
+          data: { termId: sheet.termId, resultSheetId: id },
+        },
+      })),
+    );
+    return sheet;
   }
 
   /**

@@ -12,6 +12,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { RedisModule } from './cache/redis.module';
 import { RedisService } from './cache/redis.service';
 import { AcademicsModule } from './academics/academics.module';
+import { AttendanceModule } from './attendance/attendance.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -27,6 +28,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FinanceModule } from './finance/finance.module';
 import { GuardiansModule } from './guardians/guardians.module';
+import { PortalModule } from './portal/portal.module';
 import { ResultsModule } from './results/results.module';
 import { StudentsModule } from './students/students.module';
 import { UsersModule } from './users/users.module';
@@ -115,6 +117,8 @@ import { UsersModule } from './users/users.module';
     GuardiansModule,
     FinanceModule,
     ResultsModule,
+    AttendanceModule,
+    PortalModule,
     HealthModule,
   ],
   providers: [

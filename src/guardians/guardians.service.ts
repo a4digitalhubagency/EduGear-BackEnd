@@ -108,8 +108,9 @@ export class GuardiansService {
       this.prisma.guardian.count({ where }),
     ]);
 
+    const portal = await this.portalStatuses(rows);
     return paginate(
-      rows.map((row) => this.toDto(row)),
+      rows.map((row) => this.toDto(row, portal)),
       total,
       query.page,
       query.limit,
@@ -126,7 +127,7 @@ export class GuardiansService {
       throw AppException.notFound('Guardian');
     }
 
-    return this.toProfileDto(found);
+    return this.toProfileDto(found, await this.portalStatuses([found]));
   }
 
   async update(id: string, dto: UpdateGuardianDto): Promise<GuardianDto> {
@@ -150,7 +151,7 @@ export class GuardiansService {
       include: WITH_WARD_COUNT,
     });
 
-    return this.toDto(updated);
+    return this.toDto(updated, await this.portalStatuses([updated]));
   }
 
   async remove(id: string): Promise<void> {
@@ -265,6 +266,22 @@ export class GuardiansService {
     });
   }
 
+  /** Portal status per linked user, in one query for the whole page. */
+  private async portalStatuses(
+    rows: { userId: string | null }[],
+  ): Promise<Map<string, string>> {
+    const userIds = rows
+      .map((row) => row.userId)
+      .filter((id): id is string => id !== null);
+    if (userIds.length === 0) return new Map();
+
+    const memberships = await this.prisma.membership.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, status: true },
+    });
+    return new Map(memberships.map((m) => [m.userId, m.status]));
+  }
+
   private async getOrThrow(id: string): Promise<GuardianRow> {
     const found = await this.prisma.guardian.findUnique({
       where: { id },
@@ -317,7 +334,13 @@ export class GuardiansService {
     }
   }
 
-  private toDto(row: GuardianRow): GuardianDto {
+  private toDto(
+    row: GuardianRow,
+    portal: Map<string, string> = new Map(),
+  ): GuardianDto {
+    const portalStatus = row.userId
+      ? (portal.get(row.userId) ?? 'NONE')
+      : 'NONE';
     return {
       id: row.id,
       firstName: row.firstName,
@@ -329,15 +352,19 @@ export class GuardiansService {
       addressLine: row.addressLine,
       occupation: row.occupation,
       wardCount: row._count.students,
-      hasPortalAccess: row.userId !== null,
+      hasPortalAccess: portalStatus === 'ACTIVE',
+      portalStatus,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
   }
 
-  private toProfileDto(row: GuardianProfileRow): GuardianProfileDto {
+  private toProfileDto(
+    row: GuardianProfileRow,
+    portal: Map<string, string>,
+  ): GuardianProfileDto {
     return {
-      ...this.toDto(row),
+      ...this.toDto(row, portal),
       wards: row.students.map((link) => {
         const middle = link.student.middleName
           ? ` ${link.student.middleName}`

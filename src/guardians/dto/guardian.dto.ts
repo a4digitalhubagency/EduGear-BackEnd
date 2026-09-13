@@ -211,9 +211,14 @@ export class GuardianDto {
   @ApiProperty({ description: 'Students linked to this guardian' })
   wardCount: number;
   @ApiProperty({
-    description: 'True once the guardian has a parent-portal login (Phase 4)',
+    description: 'True once the parent has accepted a portal login',
   })
   hasPortalAccess: boolean;
+  @ApiProperty({
+    enum: ['NONE', 'INVITED', 'ACTIVE', 'SUSPENDED', 'REVOKED'],
+    description: 'Where the parent-portal login stands',
+  })
+  portalStatus: string;
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;
 }

@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { PaymentStatus, Prisma, StudentFeeStatus } from '@prisma/client';
+import {
+  NotificationType,
+  PaymentStatus,
+  Prisma,
+  StudentFeeStatus,
+} from '@prisma/client';
 import { RequestContext } from '../common/context/request-context';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
@@ -7,6 +12,8 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRow } from '../database/row-lock';
+import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
+import { naira } from './naira';
 import {
   PaymentDto,
   QueryPaymentsDto,
@@ -35,7 +42,10 @@ const RECEIPT_ATTEMPTS = 5;
 
 @Injectable()
 export class PaymentsService {
-  constructor(@InjectPrisma() private readonly prisma: TenantAwarePrisma) {}
+  constructor(
+    @InjectPrisma() private readonly prisma: TenantAwarePrisma,
+    private readonly notifications: InAppNotificationsService,
+  ) {}
 
   /**
    * Records money against an invoice. It lands as PENDING and changes no
@@ -136,7 +146,19 @@ export class PaymentsService {
           await this.recalculateInvoice(tx, existing.studentFeeId);
         });
 
-        return this.findOne(id);
+        const verified = await this.findOne(id);
+        await this.notifications.notifyParentsOf([
+          {
+            studentId: verified.studentId,
+            draft: {
+              type: NotificationType.PAYMENT_VERIFIED,
+              title: 'Payment received',
+              body: `${naira(verified.amount)} for ${verified.studentName} has been confirmed. Receipt ${verified.receiptNumber}; balance now ${naira(verified.invoiceBalance)}.`,
+              data: { paymentId: verified.id },
+            },
+          },
+        ]);
+        return verified;
       } catch (error) {
         // Two bursars verifying at once can pick the same number; the unique
         // index is the real guard, so take the next one and try again.
@@ -177,7 +199,19 @@ export class PaymentsService {
       await this.recalculateInvoice(tx, existing.studentFeeId);
     });
 
-    return this.findOne(id);
+    const rejected = await this.findOne(id);
+    await this.notifications.notifyParentsOf([
+      {
+        studentId: rejected.studentId,
+        draft: {
+          type: NotificationType.PAYMENT_REJECTED,
+          title: 'Payment could not be confirmed',
+          body: `${naira(rejected.amount)} for ${rejected.studentName} was not confirmed: ${dto.reason}. Please contact the school office.`,
+          data: { paymentId: rejected.id },
+        },
+      },
+    ]);
+    return rejected;
   }
 
   async list(query: QueryPaymentsDto): Promise<PaginatedDto<PaymentDto>> {

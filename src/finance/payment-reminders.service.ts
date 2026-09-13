@@ -1,11 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { PaymentStatus, Prisma, ReminderStatus } from '@prisma/client';
+import {
+  NotificationType,
+  PaymentStatus,
+  Prisma,
+  ReminderStatus,
+} from '@prisma/client';
 import { RequestContext } from '../common/context/request-context';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { EmailMessage, EmailService } from '../notifications/email.service';
+import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
 import {
   ReminderChildDto,
   ReminderHistoryDto,
@@ -18,6 +24,7 @@ import {
 } from './dto/report.dto';
 import { ZERO, balance, sum, toAmount } from './fee-math';
 import { FinanceReportsService, OwingInvoice } from './finance-reports.service';
+import { naira } from './naira';
 
 const DEFAULT_COOLDOWN_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -57,6 +64,7 @@ export class PaymentRemindersService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly reports: FinanceReportsService,
     private readonly email: EmailService,
+    private readonly notifications: InAppNotificationsService,
   ) {}
 
   async send(dto: SendRemindersDto): Promise<SendRemindersResultDto> {
@@ -105,6 +113,20 @@ export class PaymentRemindersService {
     if (recipients.length > 0) {
       await this.deliver(batchId, recipients, dto.message);
     }
+
+    // Every reminded debtor — emailed or not — also lands in the portal inbox
+    // of any parent with a login, so the message is there when they log in.
+    await this.notifications.notifyParentsOf(
+      eligible.map((debtor) => ({
+        studentId: debtor.studentId,
+        draft: {
+          type: NotificationType.FEE_REMINDER,
+          title: 'School fees outstanding',
+          body: `${naira(toAmount(debtor.owed))} is outstanding for ${debtor.studentName}.`,
+          data: { batchId },
+        },
+      })),
+    );
 
     return this.result(
       batchId,

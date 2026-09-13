@@ -89,6 +89,10 @@ export const AUDIT_ACTIONS = {
   TEACHER_UNASSIGNED: 'teacher.unassigned',
   ASSESSMENT_SCHEME_UPDATED: 'assessment_scheme.updated',
   GRADING_SCALE_UPDATED: 'grading_scale.updated',
+  ATTENDANCE_TAKEN: 'attendance.taken',
+  PORTAL_INVITED: 'portal.invited',
+  PORTAL_REVOKED: 'portal.revoked',
+  PORTAL_PAYMENT_SUBMITTED: 'portal.payment_submitted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

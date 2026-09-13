@@ -130,6 +130,8 @@ model School {
   resultSheets         ResultSheet[]
   studentResults       StudentResult[]
   subjectResults       SubjectResult[]
+  attendanceRecords    AttendanceRecord[]
+  notifications        Notification[]
 
   @@index([status])
   @@map("schools")
@@ -165,6 +167,7 @@ model User {
   invitesSent        Membership[]        @relation("MembershipInvitedBy")
   auditLogs          AuditLog[]
   guardianProfiles   Guardian[]
+  notifications      Notification[]
 
   @@index([status])
   @@map("users")
@@ -380,6 +383,7 @@ model ClassArm {
   teachingAssignments TeachingAssignment[]
   scores              Score[]
   resultSheets        ResultSheet[]
+  attendance          AttendanceRecord[]
 
   @@unique([classId, name])
   @@index([schoolId])
@@ -417,8 +421,8 @@ model Student {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  school         School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  classArm       ClassArm?         @relation(fields: [classArmId], references: [id], onDelete: SetNull)
+  school         School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classArm       ClassArm?          @relation(fields: [classArmId], references: [id], onDelete: SetNull)
   guardians      StudentGuardian[]
   fees           StudentFee[]
   payments       Payment[]
@@ -426,6 +430,7 @@ model Student {
   scores         Score[]
   studentResults StudentResult[]
   subjectResults SubjectResult[]
+  attendance     AttendanceRecord[]
 
   @@unique([schoolId, studentId])
   @@index([schoolId, status])
@@ -964,4 +969,67 @@ model SubjectResult {
   @@unique([resultSheetId, studentId, subjectId])
   @@index([schoolId, studentId])
   @@map("subject_results")
+}
+
+// ---------------------------------------------------------------------------
+// Attendance and notifications (Phase 4)
+// ---------------------------------------------------------------------------
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+/// One student's mark on one school day.
+model AttendanceRecord {
+  id                     String           @id @default(uuid()) @db.Uuid
+  schoolId               String           @db.Uuid
+  studentId              String           @db.Uuid
+  /// The arm whose register it was taken in.
+  classArmId             String           @db.Uuid
+  date                   DateTime         @db.Date
+  status                 AttendanceStatus
+  note                   String?
+  recordedByMembershipId String?          @db.Uuid
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classArm ClassArm @relation(fields: [classArmId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, date])
+  @@index([schoolId, classArmId, date])
+  @@map("attendance_records")
+}
+
+enum NotificationType {
+  RESULT_PUBLISHED
+  PAYMENT_VERIFIED
+  PAYMENT_REJECTED
+  FEE_REMINDER
+  INVOICE_ISSUED
+}
+
+/// An in-app message for one user in one school — the parent portal's inbox.
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  schoolId  String           @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  title     String
+  body      String
+  /// Ids the client needs to link through, e.g. { studentId, termId }.
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, userId, readAt])
+  @@index([schoolId, userId, createdAt])
+  @@map("notifications")
 }
