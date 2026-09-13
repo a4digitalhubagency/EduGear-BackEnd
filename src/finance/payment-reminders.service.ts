@@ -1,23 +1,53 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { PaymentStatus, Prisma, ReminderStatus } from '@prisma/client';
 import { RequestContext } from '../common/context/request-context';
+import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
-import { EmailService } from '../notifications/email.service';
+import { EmailMessage, EmailService } from '../notifications/email.service';
 import {
+  ReminderChildDto,
+  ReminderHistoryDto,
+  ReminderHistoryQueryDto,
   ReminderRecipientDto,
   SendRemindersDto,
   SendRemindersResultDto,
+  SkippedDebtorDto,
+  UnreachableDebtorDto,
 } from './dto/report.dto';
-import { FinanceReportsService } from './finance-reports.service';
+import { ZERO, balance, sum, toAmount } from './fee-math';
+import { FinanceReportsService, OwingInvoice } from './finance-reports.service';
+
+const DEFAULT_COOLDOWN_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface Debtor {
+  studentId: string;
+  studentName: string;
+  admissionNumber: string;
+  className: string | null;
+  owed: Prisma.Decimal;
+  dueDate: Date | null;
+  guardians: OwingInvoice['student']['guardians'];
+}
 
 /**
- * Fee reminders to guardians.
+ * Fee reminders by email.
  *
- * A reminder goes to every guardian of a debtor who has an email address — a
- * school cannot know which parent handles fees, and sending to one who does not
- * is far cheaper than missing the one who does. Students with no reachable
- * guardian are counted and reported rather than silently dropped, because that
- * gap is exactly what a bursar needs to know about.
+ * Built around what makes reminders tolerable to the parents receiving them:
+ *
+ *  - One email per parent, listing every child they owe for — not one email
+ *    per child. A family with three children gets one message.
+ *  - Money awaiting verification is not chased. A parent who has paid and is
+ *    waiting for the bursar to confirm it is exactly the parent who complains.
+ *  - A cooldown, enforced from the reminder log, so a second click does not
+ *    mail every parent twice in an afternoon.
+ *
+ * Every guardian with an email is contacted: a school cannot know which parent
+ * handles fees, and mailing one who does not is cheaper than missing the one
+ * who does. Students with nobody reachable are returned with their phone
+ * numbers, because that list is the bursar's next job.
  */
 @Injectable()
 export class PaymentRemindersService {
@@ -31,87 +61,347 @@ export class PaymentRemindersService {
 
   async send(dto: SendRemindersDto): Promise<SendRemindersResultDto> {
     const invoices = await this.reports.owingInvoices(dto);
-    const debtors = [...this.reports.groupByStudent(invoices).values()].filter(
-      (debtor) => debtor.totalOwed >= (dto.minBalance ?? 0),
+    const pending = await this.pendingByInvoice(invoices.map((i) => i.id));
+    const debtors = this.collectDebtors(invoices, pending);
+
+    const skipped: SkippedDebtorDto[] = [];
+    const minBalance = new Prisma.Decimal(dto.minBalance ?? 0);
+    let eligible: Debtor[] = [];
+
+    for (const debtor of debtors.values()) {
+      if (debtor.owed.lte(0)) {
+        skipped.push({
+          studentId: debtor.studentId,
+          studentName: debtor.studentName,
+          reason: 'PAYMENT_PENDING',
+          detail: 'A payment covering the balance is awaiting verification',
+        });
+        continue;
+      }
+      if (debtor.owed.lt(minBalance)) continue;
+      eligible.push(debtor);
+    }
+
+    eligible = await this.applyCooldown(
+      eligible,
+      dto.cooldownDays ?? DEFAULT_COOLDOWN_DAYS,
+      skipped,
     );
 
-    const schoolName = await this.schoolName();
-    const contacts = this.buildContacts(invoices, debtors);
+    const { recipients, unreachable } = this.groupByGuardian(eligible);
 
-    const recipients: ReminderRecipientDto[] = [];
-    let skippedNoEmail = 0;
+    if (dto.dryRun) {
+      return this.result(
+        null,
+        true,
+        debtors.size,
+        recipients,
+        unreachable,
+        skipped,
+      );
+    }
 
-    for (const debtor of debtors) {
-      const guardians = contacts.get(debtor.studentId) ?? [];
-      if (guardians.length === 0) {
-        skippedNoEmail++;
+    const batchId = randomUUID();
+    if (recipients.length > 0) {
+      await this.deliver(batchId, recipients, dto.message);
+    }
+
+    return this.result(
+      batchId,
+      false,
+      debtors.size,
+      recipients,
+      unreachable,
+      skipped,
+    );
+  }
+
+  async history(
+    query: ReminderHistoryQueryDto,
+  ): Promise<PaginatedDto<ReminderHistoryDto>> {
+    const where: Prisma.FeeReminderWhereInput = {
+      ...(query.studentId ? { studentId: query.studentId } : {}),
+      ...(query.batchId ? { batchId: query.batchId } : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.feeReminder.findMany({
+        where,
+        orderBy: { createdAt: query.sortOrder },
+        skip: query.skip,
+        take: query.limit,
+        include: {
+          student: {
+            select: { studentId: true, firstName: true, lastName: true },
+          },
+        },
+      }),
+      this.prisma.feeReminder.count({ where }),
+    ]);
+
+    return paginate(
+      rows.map((row) => ({
+        id: row.id,
+        batchId: row.batchId,
+        studentId: row.studentId,
+        studentName: `${row.student.lastName}, ${row.student.firstName}`,
+        admissionNumber: row.student.studentId,
+        email: row.email,
+        amountOwed: toAmount(row.amountOwed),
+        status: row.status,
+        sentAt: row.createdAt,
+      })),
+      total,
+      query.page,
+      query.limit,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+
+  private async pendingByInvoice(
+    invoiceIds: string[],
+  ): Promise<Map<string, Prisma.Decimal>> {
+    if (invoiceIds.length === 0) return new Map();
+
+    const rows = await this.prisma.payment.groupBy({
+      by: ['studentFeeId'],
+      where: {
+        studentFeeId: { in: invoiceIds },
+        status: PaymentStatus.PENDING,
+      },
+      _sum: { amount: true },
+    });
+
+    return new Map(
+      rows.map((row) => [row.studentFeeId, row._sum.amount ?? ZERO]),
+    );
+  }
+
+  /** One entry per student: what they owe across invoices, less money in transit. */
+  private collectDebtors(
+    invoices: OwingInvoice[],
+    pending: Map<string, Prisma.Decimal>,
+  ): Map<string, Debtor> {
+    const debtors = new Map<string, Debtor>();
+
+    for (const invoice of invoices) {
+      const outstanding = balance(invoice);
+      if (outstanding.isZero()) continue;
+
+      const owed = outstanding.sub(pending.get(invoice.id) ?? ZERO);
+      const student = invoice.student;
+      const existing = debtors.get(student.id);
+
+      if (existing) {
+        existing.owed = existing.owed.add(owed);
+        if (
+          invoice.dueDate &&
+          (!existing.dueDate || invoice.dueDate < existing.dueDate)
+        ) {
+          existing.dueDate = invoice.dueDate;
+        }
         continue;
       }
 
-      for (const guardian of guardians) {
-        recipients.push({
+      const arm = student.classArm;
+      debtors.set(student.id, {
+        studentId: student.id,
+        studentName: `${student.lastName}, ${student.firstName}`,
+        admissionNumber: student.studentId,
+        className: arm ? `${arm.class.name} ${arm.name}` : null,
+        owed,
+        dueDate: invoice.dueDate,
+        guardians: student.guardians,
+      });
+    }
+
+    return debtors;
+  }
+
+  private async applyCooldown(
+    debtors: Debtor[],
+    cooldownDays: number,
+    skipped: SkippedDebtorDto[],
+  ): Promise<Debtor[]> {
+    if (cooldownDays === 0 || debtors.length === 0) return debtors;
+
+    const since = new Date(Date.now() - cooldownDays * DAY_MS);
+    const recent = await this.prisma.feeReminder.groupBy({
+      by: ['studentId'],
+      where: {
+        studentId: { in: debtors.map((debtor) => debtor.studentId) },
+        status: ReminderStatus.SENT,
+        createdAt: { gte: since },
+      },
+      _max: { createdAt: true },
+    });
+    const lastSent = new Map(
+      recent.map((row) => [row.studentId, row._max.createdAt]),
+    );
+
+    return debtors.filter((debtor) => {
+      const last = lastSent.get(debtor.studentId);
+      if (!last) return true;
+      skipped.push({
+        studentId: debtor.studentId,
+        studentName: debtor.studentName,
+        reason: 'RECENTLY_REMINDED',
+        detail: `Already reminded on ${last.toISOString().slice(0, 10)}; the cooldown is ${cooldownDays} day(s)`,
+      });
+      return false;
+    });
+  }
+
+  private groupByGuardian(debtors: Debtor[]): {
+    recipients: (ReminderRecipientDto & {
+      guardianId: string;
+      owedByStudent: Map<string, Prisma.Decimal>;
+    })[];
+    unreachable: UnreachableDebtorDto[];
+  } {
+    const byGuardian = new Map<
+      string,
+      ReminderRecipientDto & {
+        guardianId: string;
+        owedByStudent: Map<string, Prisma.Decimal>;
+      }
+    >();
+    const unreachable: UnreachableDebtorDto[] = [];
+
+    for (const debtor of debtors) {
+      const reachable = debtor.guardians.filter((link) => link.guardian.email);
+
+      if (reachable.length === 0) {
+        unreachable.push({
+          studentId: debtor.studentId,
           studentName: debtor.studentName,
-          guardianName: guardian.name,
-          email: guardian.email,
-          amountOwed: debtor.totalOwed,
+          admissionNumber: debtor.admissionNumber,
+          className: debtor.className,
+          amountOwed: toAmount(debtor.owed),
+          guardianPhones: debtor.guardians.map((link) => link.guardian.phone),
         });
+        continue;
+      }
 
-        if (dto.dryRun) continue;
+      const child: ReminderChildDto = {
+        studentId: debtor.studentId,
+        studentName: debtor.studentName,
+        admissionNumber: debtor.admissionNumber,
+        className: debtor.className,
+        amountOwed: toAmount(debtor.owed),
+        dueDate: debtor.dueDate,
+      };
 
-        // Delivery must never fail the request: the send itself already
-        // swallows provider errors, and a reminder is not a transaction.
-        await this.email.send(
-          this.buildMessage({
-            to: guardian.email,
-            guardianName: guardian.name,
-            studentName: debtor.studentName,
-            amountOwed: debtor.totalOwed,
-            dueDate: debtor.earliestDueDate,
-            schoolName,
-            note: dto.message,
-          }),
-        );
+      for (const link of reachable) {
+        const guardian = link.guardian;
+        const entry = byGuardian.get(guardian.id) ?? {
+          guardianId: guardian.id,
+          guardianName: `${guardian.firstName} ${guardian.lastName}`,
+          email: guardian.email!,
+          children: [],
+          totalOwed: 0,
+          delivered: null,
+          owedByStudent: new Map<string, Prisma.Decimal>(),
+        };
+        entry.children.push(child);
+        entry.owedByStudent.set(debtor.studentId, debtor.owed);
+        entry.totalOwed = toAmount(sum([...entry.owedByStudent.values()]));
+        byGuardian.set(guardian.id, entry);
       }
     }
 
-    if (!dto.dryRun && recipients.length > 0) {
-      this.logger.log(
-        `Sent ${recipients.length} fee reminder(s) for ${debtors.length} debtor(s)`,
-      );
-    }
-
-    return {
-      debtors: debtors.length,
-      sent: recipients.length,
-      skippedNoEmail,
-      dryRun: dto.dryRun ?? false,
-      recipients,
-    };
+    return { recipients: [...byGuardian.values()], unreachable };
   }
 
-  private buildContacts(
-    invoices: Awaited<ReturnType<FinanceReportsService['owingInvoices']>>,
-    debtors: { studentId: string }[],
-  ): Map<string, { name: string; email: string }[]> {
-    const wanted = new Set(debtors.map((debtor) => debtor.studentId));
-    const contacts = new Map<string, { name: string; email: string }[]>();
+  private async deliver(
+    batchId: string,
+    recipients: (ReminderRecipientDto & {
+      guardianId: string;
+      owedByStudent: Map<string, Prisma.Decimal>;
+    })[],
+    note?: string,
+  ): Promise<void> {
+    const schoolName = await this.schoolName();
+    const messages = recipients.map((recipient) =>
+      this.buildMessage(recipient, schoolName, note),
+    );
 
-    for (const invoice of invoices) {
-      const student = invoice.student;
-      if (!wanted.has(student.id) || contacts.has(student.id)) continue;
+    const accepted = await this.email.sendBatch(messages, batchId);
+    recipients.forEach(
+      (recipient, index) => (recipient.delivered = accepted[index]),
+    );
 
-      contacts.set(
-        student.id,
-        student.guardians
-          .filter((link) => Boolean(link.guardian.email))
-          .map((link) => ({
-            name: `${link.guardian.firstName} ${link.guardian.lastName}`,
-            email: link.guardian.email as string,
-          })),
-      );
-    }
+    const membershipId = RequestContext.getAuth()?.membershipId ?? null;
+    const schoolId = RequestContext.getTenantId()!;
 
-    return contacts;
+    // Failures are logged too: the history should say "we tried", and a failed
+    // send must not count toward the cooldown, which reads SENT only.
+    await this.prisma.feeReminder.createMany({
+      data: recipients.flatMap((recipient) =>
+        [...recipient.owedByStudent.entries()].map(([studentId, owed]) => ({
+          schoolId,
+          batchId,
+          studentId,
+          guardianId: recipient.guardianId,
+          email: recipient.email,
+          amountOwed: owed,
+          status: recipient.delivered
+            ? ReminderStatus.SENT
+            : ReminderStatus.FAILED,
+          sentByMembershipId: membershipId,
+        })),
+      ),
+    });
+
+    const failed = recipients.filter(
+      (recipient) => !recipient.delivered,
+    ).length;
+    this.logger.log(
+      `Fee reminder batch ${batchId}: ${recipients.length - failed} sent, ${failed} failed`,
+    );
+  }
+
+  private result(
+    batchId: string | null,
+    dryRun: boolean,
+    debtors: number,
+    recipients: ReminderRecipientDto[],
+    unreachable: UnreachableDebtorDto[],
+    skipped: SkippedDebtorDto[],
+  ): SendRemindersResultDto {
+    const reminded = new Set(
+      recipients.flatMap((recipient) =>
+        recipient.children.map((child) => child.studentId),
+      ),
+    );
+
+    return {
+      batchId,
+      dryRun,
+      debtors,
+      sent: dryRun
+        ? recipients.length
+        : recipients.filter((recipient) => recipient.delivered).length,
+      failed: dryRun
+        ? 0
+        : recipients.filter((recipient) => recipient.delivered === false)
+            .length,
+      studentsReminded: reminded.size,
+      skippedNoEmail: unreachable.length,
+      // The internal bookkeeping fields stay internal.
+      recipients: recipients.map(
+        ({ guardianName, email, children, totalOwed, delivered }) => ({
+          guardianName,
+          email,
+          children,
+          totalOwed,
+          delivered,
+        }),
+      ),
+      unreachable,
+      skipped,
+    };
   }
 
   private async schoolName(): Promise<string> {
@@ -122,41 +412,55 @@ export class PaymentRemindersService {
       where: { id: schoolId },
       select: { name: true },
     });
-
     return school?.name ?? 'Your school';
   }
 
-  private buildMessage(params: {
-    to: string;
-    guardianName: string;
-    studentName: string;
-    amountOwed: number;
-    dueDate: Date | null;
-    schoolName: string;
-    note?: string;
-  }) {
-    const amount = params.amountOwed.toLocaleString('en-NG', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    const due = params.dueDate
-      ? ` It was due on ${params.dueDate.toISOString().slice(0, 10)}.`
-      : '';
-    const note = params.note ? `\n\n${params.note}` : '';
+  private buildMessage(
+    recipient: ReminderRecipientDto,
+    schoolName: string,
+    note?: string,
+  ): EmailMessage {
+    const naira = (amount: number) =>
+      `NGN ${amount.toLocaleString('en-NG', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
 
-    const text =
-      `Dear ${params.guardianName},\n\n` +
-      `Our records show an outstanding balance of NGN ${amount} on the school ` +
-      `fees for ${params.studentName}.${due}\n\n` +
-      `If you have already paid, please disregard this message or send your ` +
-      `payment reference to the school office so we can confirm it.${note}\n\n` +
-      `${params.schoolName}`;
+    const lines = recipient.children.map((child) => {
+      const klass = child.className ? ` (${child.className})` : '';
+      const due = child.dueDate
+        ? `, due ${child.dueDate.toISOString().slice(0, 10)}`
+        : '';
+      return `- ${child.studentName}${klass}: ${naira(child.amountOwed)}${due}`;
+    });
+
+    const several = recipient.children.length > 1;
+    const text = [
+      `Dear ${recipient.guardianName},`,
+      '',
+      `Our records show outstanding school fees for ${several ? 'your children' : 'your child'}:`,
+      '',
+      ...lines,
+      ...(several
+        ? ['', `Total outstanding: ${naira(recipient.totalOwed)}`]
+        : []),
+      '',
+      'If you have already paid, please send your payment reference to the school office so we can confirm it — no further action is needed once it is verified.',
+      ...(note ? ['', note] : []),
+      '',
+      schoolName,
+    ].join('\n');
+
+    const escape = (value: string) =>
+      value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     return {
-      to: params.to,
-      subject: `Outstanding school fees for ${params.studentName}`,
+      to: recipient.email,
+      subject: several
+        ? `Outstanding school fees for your children — ${schoolName}`
+        : `Outstanding school fees for ${recipient.children[0].studentName} — ${schoolName}`,
       text,
-      html: `<p>${text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br />')}</p>`,
+      html: `<p>${escape(text).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br />')}</p>`,
     };
   }
 }

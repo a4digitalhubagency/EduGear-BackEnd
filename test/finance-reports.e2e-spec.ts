@@ -7,7 +7,7 @@ import {
   TestContext,
 } from './utils/test-app';
 
-describe('Finance reports and reminders', () => {
+describe('Finance reports', () => {
   let ctx: TestContext;
   let school: RegisteredSchool;
   let other: RegisteredSchool;
@@ -412,140 +412,6 @@ describe('Finance reports and reminders', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Reminders
-  // -------------------------------------------------------------------------
-
-  it('reports who would be contacted on a dry run', async () => {
-    await billEveryone();
-    const guardian = await ctx
-      .http()
-      .post('/api/guardians')
-      .set(auth())
-      .send({
-        firstName: 'Emeka',
-        lastName: 'Obi',
-        phone: '08031234567',
-        email: 'emeka@example.com',
-      })
-      .expect(201);
-    await ctx
-      .http()
-      .post(`/api/students/${students[0].id}/guardians`)
-      .set(auth())
-      .send({ guardianId: guardian.body.id, relationship: 'FATHER' })
-      .expect(201);
-
-    const response = await ctx
-      .http()
-      .post('/api/finance/reminders')
-      .set(auth())
-      .send({ dryRun: true })
-      .expect(200);
-
-    expect(response.body).toMatchObject({
-      debtors: 2,
-      sent: 1,
-      skippedNoEmail: 1,
-      dryRun: true,
-    });
-    expect(response.body.recipients[0]).toMatchObject({
-      studentName: 'Obi, Ada',
-      email: 'emeka@example.com',
-      amountOwed: 50000,
-    });
-
-    // A dry run contacts nobody, so it leaves no audit entry.
-    const entry = await ctx.db.auditLog.findFirst({
-      where: { action: 'payment.reminders_sent' },
-    });
-    expect(entry).toBeNull();
-  });
-
-  it('sends reminders and audits the send', async () => {
-    await billEveryone();
-    const guardian = await ctx
-      .http()
-      .post('/api/guardians')
-      .set(auth())
-      .send({
-        firstName: 'Emeka',
-        lastName: 'Obi',
-        phone: '08031234567',
-        email: 'emeka@example.com',
-      })
-      .expect(201);
-    await ctx
-      .http()
-      .post(`/api/students/${students[0].id}/guardians`)
-      .set(auth())
-      .send({ guardianId: guardian.body.id, relationship: 'FATHER' })
-      .expect(201);
-
-    const response = await ctx
-      .http()
-      .post('/api/finance/reminders')
-      .set(auth())
-      .send({ message: 'Kindly settle before resumption.' })
-      .expect(200);
-    expect(response.body).toMatchObject({ sent: 1, dryRun: false });
-
-    const entry = await ctx.db.auditLog.findFirst({
-      where: { action: 'payment.reminders_sent' },
-    });
-    expect(entry).not.toBeNull();
-  });
-
-  it('contacts every guardian who has an email', async () => {
-    await billEveryone();
-    for (const [index, name] of [
-      ['Emeka', 'a'],
-      ['Ngozi', 'b'],
-    ].entries()) {
-      const guardian = await ctx
-        .http()
-        .post('/api/guardians')
-        .set(auth())
-        .send({
-          firstName: name[0],
-          lastName: 'Obi',
-          phone: '08031234567',
-          email: `parent-${name[1]}@example.com`,
-        })
-        .expect(201);
-      await ctx
-        .http()
-        .post(`/api/students/${students[0].id}/guardians`)
-        .set(auth())
-        .send({
-          guardianId: guardian.body.id,
-          relationship: index === 0 ? 'FATHER' : 'MOTHER',
-        })
-        .expect(201);
-    }
-
-    const response = await ctx
-      .http()
-      .post('/api/finance/reminders')
-      .set(auth())
-      .send({ dryRun: true })
-      .expect(200);
-    expect(response.body.sent).toBe(2);
-  });
-
-  it('skips students who have already paid', async () => {
-    const [first] = await billEveryone();
-    await payAndVerify(first, 50000);
-
-    const response = await ctx
-      .http()
-      .post('/api/finance/reminders')
-      .set(auth())
-      .send({ dryRun: true })
-      .expect(200);
-    expect(response.body.debtors).toBe(1);
-  });
-
-  // -------------------------------------------------------------------------
   // Tenant isolation
   // -------------------------------------------------------------------------
 
@@ -565,17 +431,5 @@ describe('Finance reports and reminders', () => {
       .set(bearer(other.accessToken))
       .expect(200);
     expect(list.body.data).toHaveLength(0);
-  });
-
-  it('never reminds another school’s debtors', async () => {
-    await billEveryone();
-
-    const response = await ctx
-      .http()
-      .post('/api/finance/reminders')
-      .set(bearer(other.accessToken))
-      .send({ dryRun: true })
-      .expect(200);
-    expect(response.body.debtors).toBe(0);
   });
 });

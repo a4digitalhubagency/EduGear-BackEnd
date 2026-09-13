@@ -44,6 +44,7 @@ export async function resetDatabase(db: PrismaClient): Promise<void> {
   await db.$executeRawUnsafe(`
     TRUNCATE TABLE
       audit_logs,
+      fee_reminders,
       payments,
       student_fee_items,
       student_fees,

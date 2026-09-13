@@ -217,6 +217,7 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/finance/reports/summary` | `finance.read` |
 | GET | `/finance/reports/debtors` | `finance.read` |
 | POST | `/finance/reminders` | `finance.update` |
+| GET | `/finance/reminders` | `finance.read` |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -435,5 +436,9 @@ The rules that make the numbers trustworthy:
 - **Discounts and waivers are recorded with a reason**, leaving both what was billed and what was
   forgiven visible in the ledger.
 - Withdrawn students are never billed; waived and cancelled invoices are never counted as debts.
+- **Reminders** send one email per parent covering all their children, chase only what is not
+  already awaiting verification, and honour a cooldown (default 7 days) read from the reminder log.
+  Delivery uses Resend's batch API with idempotency keys. Families with no email come back with
+  phone numbers so the bursar can call.
 
 Next: **Phase 3 — Results.** Its models are deliberately not in the schema yet.

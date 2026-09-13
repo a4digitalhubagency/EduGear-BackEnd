@@ -120,6 +120,7 @@ model School {
   studentFees       StudentFee[]
   studentFeeItems   StudentFeeItem[]
   payments          Payment[]
+  feeReminders      FeeReminder[]
 
   @@index([status])
   @@map("schools")
@@ -406,6 +407,7 @@ model Student {
   guardians StudentGuardian[]
   fees      StudentFee[]
   payments  Payment[]
+  reminders FeeReminder[]
 
   @@unique([schoolId, studentId])
   @@index([schoolId, status])
@@ -429,9 +431,10 @@ model Guardian {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  school   School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user     User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  students StudentGuardian[]
+  school    School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user      User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  students  StudentGuardian[]
+  reminders FeeReminder[]
 
   // NULL emails stay non-conflicting in Postgres, so guardians without email are fine.
   @@unique([schoolId, email])
@@ -685,4 +688,35 @@ model Payment {
   @@index([schoolId, paidAt])
   @@index([studentFeeId])
   @@map("payments")
+}
+
+enum ReminderStatus {
+  SENT
+  FAILED
+}
+
+/// One fee reminder about one student to one guardian address. The log is what
+/// enforces the cooldown — so a second click does not mail every parent again —
+/// and what answers "when did we last chase this family?".
+model FeeReminder {
+  id                 String         @id @default(uuid()) @db.Uuid
+  schoolId           String         @db.Uuid
+  /// Groups everything sent by one request.
+  batchId            String         @db.Uuid
+  studentId          String         @db.Uuid
+  guardianId         String?        @db.Uuid
+  email              String
+  amountOwed         Decimal        @db.Decimal(12, 2)
+  status             ReminderStatus
+  sentByMembershipId String?        @db.Uuid
+  createdAt          DateTime       @default(now())
+
+  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student  Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  guardian Guardian? @relation(fields: [guardianId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, studentId, createdAt])
+  @@index([schoolId, batchId])
+  @@index([schoolId, createdAt])
+  @@map("fee_reminders")
 }

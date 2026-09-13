@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { PaymentStatus, Prisma, StudentFeeStatus } from '@prisma/client';
+import {
+  PaymentStatus,
+  Prisma,
+  ReminderStatus,
+  StudentFeeStatus,
+} from '@prisma/client';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
@@ -22,7 +27,13 @@ const OWING_INVOICE = {
       guardians: {
         include: {
           guardian: {
-            select: { firstName: true, lastName: true, email: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+            },
           },
         },
         orderBy: { isPrimary: 'desc' },
@@ -133,12 +144,10 @@ export class FinanceReportsService {
     rows.sort((a, b) => b.totalOwed - a.totalOwed);
 
     const start = query.skip;
-    return paginate(
-      rows.slice(start, start + query.limit),
-      rows.length,
-      query.page,
-      query.limit,
-    );
+    const page = rows.slice(start, start + query.limit);
+    await this.attachLastReminded(page);
+
+    return paginate(page, rows.length, query.page, query.limit);
   }
 
   /** Shared with the reminder service so both act on the same definition. */
@@ -200,10 +209,32 @@ export class FinanceReportsService {
         guardianContacts: student.guardians
           .map((link) => link.guardian.email)
           .filter((email): email is string => Boolean(email)),
+        lastRemindedAt: null,
       });
     }
 
     return byStudent;
+  }
+
+  /** Only for the page being returned — one grouped query, not one per row. */
+  private async attachLastReminded(rows: DebtorDto[]): Promise<void> {
+    if (rows.length === 0) return;
+
+    const latest = await this.prisma.feeReminder.groupBy({
+      by: ['studentId'],
+      where: {
+        studentId: { in: rows.map((row) => row.studentId) },
+        status: ReminderStatus.SENT,
+      },
+      _max: { createdAt: true },
+    });
+    const byStudent = new Map(
+      latest.map((row) => [row.studentId, row._max.createdAt]),
+    );
+
+    for (const row of rows) {
+      row.lastRemindedAt = byStudent.get(row.studentId) ?? null;
+    }
   }
 
   private async outstandingTotal(

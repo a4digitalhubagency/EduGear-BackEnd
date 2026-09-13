@@ -33,6 +33,7 @@ export const TENANT_SCOPED_MODELS: Readonly<Record<string, TenantModelConfig>> =
     StudentFee: { field: 'schoolId' },
     StudentFeeItem: { field: 'schoolId' },
     Payment: { field: 'schoolId' },
+    FeeReminder: { field: 'schoolId' },
     AuditLog: { field: 'schoolId', nullable: true },
   };
 

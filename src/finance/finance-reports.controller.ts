@@ -23,6 +23,8 @@ import {
   DebtorDto,
   DebtorQueryDto,
   FinanceReportQueryDto,
+  ReminderHistoryDto,
+  ReminderHistoryQueryDto,
   SendRemindersDto,
   SendRemindersResultDto,
 } from './dto/report.dto';
@@ -79,13 +81,29 @@ export class FinanceReportsController {
         entityType: 'School',
         description: `Sent ${result.sent} fee reminder(s) to ${result.debtors} debtor(s)`,
         metadata: {
+          batchId: result.batchId,
           debtors: result.debtors,
           sent: result.sent,
+          failed: result.failed,
           skippedNoEmail: result.skippedNoEmail,
+          skipped: result.skipped.length,
         },
       });
     }
 
     return result;
+  }
+
+  @Get('reminders')
+  @RequirePermissions(PERMISSIONS.FINANCE_READ)
+  @ApiOperation({
+    summary: 'Fee reminder history',
+    description:
+      'Who was reminded about which student, when, and whether it was delivered.',
+  })
+  reminderHistory(
+    @Query() query: ReminderHistoryQueryDto,
+  ): Promise<PaginatedDto<ReminderHistoryDto>> {
+    return this.reminders.history(query);
   }
 }
