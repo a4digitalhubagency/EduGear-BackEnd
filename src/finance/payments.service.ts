@@ -6,6 +6,7 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
+import { lockRow } from '../database/row-lock';
 import {
   PaymentDto,
   QueryPaymentsDto,
@@ -14,7 +15,6 @@ import {
 } from './dto/payment.dto';
 import { balance, deriveStatus, payable, sum, toAmount } from './fee-math';
 import { formatReceiptNumber, nextReceiptSequence } from './receipt-number';
-import { StudentFeesService } from './student-fees.service';
 
 const WITH_DETAIL = {
   student: {
@@ -35,10 +35,7 @@ const RECEIPT_ATTEMPTS = 5;
 
 @Injectable()
 export class PaymentsService {
-  constructor(
-    @InjectPrisma() private readonly prisma: TenantAwarePrisma,
-    private readonly invoices: StudentFeesService,
-  ) {}
+  constructor(@InjectPrisma() private readonly prisma: TenantAwarePrisma) {}
 
   /**
    * Records money against an invoice. It lands as PENDING and changes no
@@ -46,39 +43,52 @@ export class PaymentsService {
    * unverified receipt from clearing a debt.
    */
   async record(dto: RecordPaymentDto, schoolId: string): Promise<PaymentDto> {
-    const invoice = await this.invoices.getOrThrow(dto.studentFeeId);
-
-    if (
-      invoice.status === StudentFeeStatus.CANCELLED ||
-      invoice.status === StudentFeeStatus.WAIVED
-    ) {
-      throw AppException.conflict(
-        `This invoice is ${invoice.status} and cannot take payments`,
-      );
-    }
-
     const amount = new Prisma.Decimal(dto.amount);
-    await this.assertNotOverpaying(invoice, amount);
 
-    const created = await this.prisma.payment.create({
-      data: {
-        // Prisma's types require the tenant column on create. Supplying it is
-        // safe: the guard rejects any value other than the active tenant.
-        schoolId,
-        studentFeeId: invoice.id,
-        studentId: invoice.studentId,
-        // Placeholder until verification issues the real one; the column is
-        // unique per school, so it has to be unique even while pending.
-        receiptNumber: `PENDING-${crypto.randomUUID()}`,
-        amount,
-        method: dto.method,
-        reference: dto.reference ?? null,
-        evidenceUrl: dto.evidenceUrl ?? null,
-        paidAt: dto.paidAt,
-        note: dto.note ?? null,
-        recordedByMembershipId: RequestContext.getAuth()?.membershipId ?? null,
-      },
-      include: WITH_DETAIL,
+    const created = await this.prisma.$transaction(async (tx) => {
+      // The ceiling check reads every pending payment on the invoice; the lock
+      // stops a second recording from slipping in between that read and the
+      // insert, which is how two full-balance claims were both accepted.
+      if (!(await lockRow(tx, 'studentFee', dto.studentFeeId))) {
+        throw AppException.notFound('Invoice');
+      }
+
+      const invoice = await tx.studentFee.findUniqueOrThrow({
+        where: { id: dto.studentFeeId },
+      });
+
+      if (
+        invoice.status === StudentFeeStatus.CANCELLED ||
+        invoice.status === StudentFeeStatus.WAIVED
+      ) {
+        throw AppException.conflict(
+          `This invoice is ${invoice.status} and cannot take payments`,
+        );
+      }
+
+      await this.assertNotOverpaying(tx, invoice, amount);
+
+      return tx.payment.create({
+        data: {
+          // Prisma's types require the tenant column on create. Supplying it
+          // is safe: the guard rejects any value other than the active tenant.
+          schoolId,
+          studentFeeId: invoice.id,
+          studentId: invoice.studentId,
+          // Placeholder until verification issues the real one; the column is
+          // unique per school, so it has to be unique even while pending.
+          receiptNumber: `PENDING-${crypto.randomUUID()}`,
+          amount,
+          method: dto.method,
+          reference: dto.reference ?? null,
+          evidenceUrl: dto.evidenceUrl ?? null,
+          paidAt: dto.paidAt,
+          note: dto.note ?? null,
+          recordedByMembershipId:
+            RequestContext.getAuth()?.membershipId ?? null,
+        },
+        include: WITH_DETAIL,
+      });
     });
 
     return this.toDto(created);
@@ -95,12 +105,22 @@ export class PaymentsService {
     const membershipId = RequestContext.getAuth()?.membershipId ?? null;
 
     for (let attempt = 0; attempt < RECEIPT_ATTEMPTS; attempt++) {
-      const receiptNumber = await this.nextReceiptNumber(existing.paidAt);
-
       try {
         await this.prisma.$transaction(async (tx) => {
-          await tx.payment.update({
-            where: { id },
+          // Serialise every writer to this invoice. Without the lock, two
+          // payments verified together each recompute the balance before the
+          // other commits, and one of them silently drops out of amountPaid.
+          await lockRow(tx, 'studentFee', existing.studentFeeId);
+
+          const receiptNumber = await this.nextReceiptNumber(
+            tx,
+            existing.paidAt,
+          );
+
+          // Conditional on still being PENDING, so a double-click verifies
+          // exactly once: the loser matches no row and is told so.
+          const { count } = await tx.payment.updateMany({
+            where: { id, status: PaymentStatus.PENDING },
             data: {
               status: PaymentStatus.VERIFIED,
               receiptNumber,
@@ -109,6 +129,9 @@ export class PaymentsService {
               rejectionReason: null,
             },
           });
+          if (count === 0) {
+            throw AppException.conflict('This payment is no longer pending');
+          }
 
           await this.recalculateInvoice(tx, existing.studentFeeId);
         });
@@ -135,8 +158,10 @@ export class PaymentsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id },
+      await lockRow(tx, 'studentFee', existing.studentFeeId);
+
+      const { count } = await tx.payment.updateMany({
+        where: { id, status: { not: PaymentStatus.REJECTED } },
         data: {
           status: PaymentStatus.REJECTED,
           rejectionReason: dto.reason,
@@ -145,6 +170,9 @@ export class PaymentsService {
           verifiedAt: new Date(),
         },
       });
+      if (count === 0) {
+        throw AppException.conflict('This payment is already rejected');
+      }
 
       await this.recalculateInvoice(tx, existing.studentFeeId);
     });
@@ -263,10 +291,10 @@ export class PaymentsService {
     });
   }
 
-  private async nextReceiptNumber(paidAt: Date): Promise<string> {
+  private async nextReceiptNumber(tx: TxClient, paidAt: Date): Promise<string> {
     const year = paidAt.getUTCFullYear();
 
-    const issued = await this.prisma.payment.findMany({
+    const issued = await tx.payment.findMany({
       where: { receiptNumber: { startsWith: `RCP/${year}/` } },
       select: { receiptNumber: true },
     });
@@ -285,6 +313,7 @@ export class PaymentsService {
    * full balance should not both be accepted and then both verified.
    */
   private async assertNotOverpaying(
+    tx: TxClient,
     invoice: {
       id: string;
       totalAmount: Prisma.Decimal;
@@ -293,7 +322,7 @@ export class PaymentsService {
     },
     amount: Prisma.Decimal,
   ): Promise<void> {
-    const pending = await this.prisma.payment.findMany({
+    const pending = await tx.payment.findMany({
       where: { studentFeeId: invoice.id, status: PaymentStatus.PENDING },
       select: { amount: true },
     });

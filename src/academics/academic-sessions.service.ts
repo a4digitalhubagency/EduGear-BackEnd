@@ -173,6 +173,16 @@ export class AcademicSessionsService {
       );
     }
 
+    // Fee structures cascade from the session too, and invoices restrict them.
+    const structures = await this.prisma.feeStructure.count({
+      where: { sessionId: id },
+    });
+    if (structures > 0) {
+      throw AppException.conflict(
+        `This session has ${structures} fee structure(s) built on it. Archive or delete them first.`,
+      );
+    }
+
     await this.prisma.academicSession.delete({ where: { id } });
   }
 

@@ -172,7 +172,26 @@ export class TermsService {
       );
     }
 
+    await this.assertNoFeeStructures({ termId: id }, 'term');
+
     await this.prisma.term.delete({ where: { id } });
+  }
+
+  /**
+   * Fee structures cascade from their term, and invoices restrict their
+   * structure — so a delete would either destroy unbilled pricing silently or
+   * fail on a foreign key. Refuse up front with a reason instead.
+   */
+  private async assertNoFeeStructures(
+    where: Prisma.FeeStructureWhereInput,
+    label: string,
+  ): Promise<void> {
+    const count = await this.prisma.feeStructure.count({ where });
+    if (count > 0) {
+      throw AppException.conflict(
+        `This ${label} has ${count} fee structure(s) built on it. Archive or delete them first.`,
+      );
+    }
   }
 
   private async getOrThrow(id: string): Promise<TermRow> {

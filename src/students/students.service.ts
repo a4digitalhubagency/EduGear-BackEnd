@@ -60,9 +60,6 @@ export class StudentsService {
   async admit(dto: AdmitStudentDto, schoolId: string): Promise<StudentDto> {
     this.assertBornBeforeAdmission(dto.dateOfBirth ?? null, dto.admissionDate);
 
-    if (dto.classArmId) {
-      await this.arms.assertHasRoom(dto.classArmId);
-    }
     if (dto.studentId) {
       await this.assertAdmissionNumberFree(dto.studentId);
     }
@@ -92,9 +89,14 @@ export class StudentsService {
     };
 
     if (dto.studentId) {
-      const created = await this.prisma.student.create({
-        data: { ...data, studentId: dto.studentId },
-        include: WITH_ARM,
+      const supplied = dto.studentId;
+      const created = await this.prisma.$transaction(async (tx) => {
+        if (dto.classArmId)
+          await this.arms.assertHasRoom(dto.classArmId, 1, tx);
+        return tx.student.create({
+          data: { ...data, studentId: supplied },
+          include: WITH_ARM,
+        });
       });
       return this.toDto(created);
     }
@@ -160,34 +162,40 @@ export class StudentsService {
       dto.admissionDate ?? existing.admissionDate,
     );
 
-    // Only check room when the student is actually moving into a new arm.
-    if (dto.classArmId && dto.classArmId !== existing.classArmId) {
-      await this.arms.assertHasRoom(dto.classArmId);
-    }
+    // Only check room when the student is actually moving into a new arm —
+    // and do it under the arm's lock so the move cannot overfill it.
+    const moving =
+      dto.classArmId && dto.classArmId !== existing.classArmId
+        ? dto.classArmId
+        : null;
 
-    const updated = await this.prisma.student.update({
-      where: { id },
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        middleName: dto.middleName,
-        gender: dto.gender,
-        dateOfBirth: dto.dateOfBirth,
-        email: dto.email,
-        phone: dto.phone,
-        addressLine: dto.addressLine,
-        photoUrl: dto.photoUrl,
-        admissionDate: dto.admissionDate,
-        classArmId: dto.classArmId,
-        bloodGroup: dto.bloodGroup,
-        genotype: dto.genotype,
-        stateOfOrigin: dto.stateOfOrigin,
-        lga: dto.lga,
-        nationality: dto.nationality,
-        religion: dto.religion,
-        notes: dto.notes,
-      },
-      include: WITH_ARM,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (moving) await this.arms.assertHasRoom(moving, 1, tx);
+
+      return tx.student.update({
+        where: { id },
+        data: {
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          middleName: dto.middleName,
+          gender: dto.gender,
+          dateOfBirth: dto.dateOfBirth,
+          email: dto.email,
+          phone: dto.phone,
+          addressLine: dto.addressLine,
+          photoUrl: dto.photoUrl,
+          admissionDate: dto.admissionDate,
+          classArmId: dto.classArmId,
+          bloodGroup: dto.bloodGroup,
+          genotype: dto.genotype,
+          stateOfOrigin: dto.stateOfOrigin,
+          lga: dto.lga,
+          nationality: dto.nationality,
+          religion: dto.religion,
+          notes: dto.notes,
+        },
+        include: WITH_ARM,
+      });
     });
 
     return this.toDto(updated);
@@ -207,15 +215,18 @@ export class StudentsService {
       throw AppException.conflict(`Student is already ${dto.status}`);
     }
 
-    // Returning to ACTIVE has to fit in the arm the student still points at.
-    if (dto.status === StudentStatus.ACTIVE && existing.classArmId) {
-      await this.arms.assertHasRoom(existing.classArmId);
-    }
+    const returningTo =
+      dto.status === StudentStatus.ACTIVE ? existing.classArmId : null;
 
-    const updated = await this.prisma.student.update({
-      where: { id },
-      data: { status: dto.status },
-      include: WITH_ARM,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Returning to ACTIVE has to fit in the arm the student still points at.
+      if (returningTo) await this.arms.assertHasRoom(returningTo, 1, tx);
+
+      return tx.student.update({
+        where: { id },
+        data: { status: dto.status },
+        include: WITH_ARM,
+      });
     });
 
     return this.toDto(updated);
@@ -223,8 +234,20 @@ export class StudentsService {
 
   async remove(id: string): Promise<void> {
     await this.getOrThrow(id);
-    // Guardian links cascade; finance and results do not exist yet. Schools
-    // that want to keep the record should set a status instead.
+
+    // Invoices and payments cascade from the student at the database level,
+    // so deleting an invoiced student would erase money history. A status
+    // change keeps the record and takes the student off every roll.
+    const [invoices, payments] = await Promise.all([
+      this.prisma.studentFee.count({ where: { studentId: id } }),
+      this.prisma.payment.count({ where: { studentId: id } }),
+    ]);
+    if (invoices > 0 || payments > 0) {
+      throw AppException.conflict(
+        'This student has financial records and cannot be deleted. Change their status to WITHDRAWN or TRANSFERRED instead.',
+      );
+    }
+
     await this.prisma.student.delete({ where: { id } });
   }
 
@@ -356,17 +379,25 @@ export class StudentsService {
       throw AppException.conflict(`No active students to move out of ${from}`);
     }
 
-    if (dto.toClassArmId) {
-      await this.arms.assertHasRoom(dto.toClassArmId, movers.length);
-    }
-
     const ids = movers.map((row) => row.id);
-    await this.prisma.student.updateMany({
-      where: { id: { in: ids } },
-      data: graduating
-        ? // Graduates keep their record but leave the roll entirely.
-          { status: StudentStatus.GRADUATED, classArmId: null }
-        : { classArmId: dto.toClassArmId },
+    const target = dto.toClassArmId;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (target) await this.arms.assertHasRoom(target, ids.length, tx);
+
+      await tx.student.updateMany({
+        // Re-asserting the source and status inside the transaction means a
+        // student withdrawn a moment ago is not swept along with the arm.
+        where: {
+          id: { in: ids },
+          classArmId: dto.fromClassArmId,
+          status: StudentStatus.ACTIVE,
+        },
+        data: graduating
+          ? // Graduates keep their record but leave the roll entirely.
+            { status: StudentStatus.GRADUATED, classArmId: null }
+          : { classArmId: target },
+      });
     });
 
     return {
@@ -516,9 +547,16 @@ export class StudentsService {
       );
 
       try {
-        return await this.prisma.student.create({
-          data: { ...data, studentId },
-          include: WITH_ARM,
+        // Each attempt is its own transaction: a unique violation aborts it,
+        // and the arm lock is released so the retry can take it again.
+        return await this.prisma.$transaction(async (tx) => {
+          if (data.classArmId) {
+            await this.arms.assertHasRoom(data.classArmId, 1, tx);
+          }
+          return tx.student.create({
+            data: { ...data, studentId },
+            include: WITH_ARM,
+          });
         });
       } catch (error) {
         if (!this.isUniqueViolation(error)) throw error;

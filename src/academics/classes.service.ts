@@ -102,6 +102,16 @@ export class ClassesService {
       );
     }
 
+    // Fee structures scoped to this class cascade from it as well.
+    const structures = await this.prisma.feeStructure.count({
+      where: { classId: id },
+    });
+    if (structures > 0) {
+      throw AppException.conflict(
+        `This class has ${structures} fee structure(s) built on it. Archive or delete them first.`,
+      );
+    }
+
     await this.prisma.class.delete({ where: { id } });
   }
 

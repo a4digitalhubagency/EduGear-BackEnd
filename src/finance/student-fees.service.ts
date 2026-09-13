@@ -1,10 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, StudentFeeStatus, StudentStatus } from '@prisma/client';
+import {
+  PaymentStatus,
+  Prisma,
+  StudentFee,
+  StudentFeeStatus,
+  StudentStatus,
+} from '@prisma/client';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
-import { TenantAwarePrisma } from '../database/prisma.service';
+import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
+import { lockRow } from '../database/row-lock';
 import {
   AssignFeeDto,
   AssignFeeResultDto,
@@ -180,68 +187,90 @@ export class StudentFeesService {
 
   /** A scholarship or sibling discount: recorded openly, not hidden in the total. */
   async discount(id: string, dto: DiscountFeeDto): Promise<StudentFeeDto> {
-    const existing = await this.getOrThrow(id);
-    this.assertOpen(existing);
-
     const discount = new Prisma.Decimal(dto.amount);
-    if (discount.greaterThan(existing.totalAmount)) {
-      throw AppException.badRequest(
-        'A discount cannot exceed the amount billed',
-        ErrorCode.VALIDATION_ERROR,
-      );
-    }
 
-    const next = { ...existing, discountAmount: discount };
-    await this.prisma.studentFee.update({
-      where: { id },
-      data: {
-        discountAmount: discount,
-        waiverReason: dto.reason,
-        status: deriveStatus(next),
-      },
+    return this.mutateLocked(id, async (tx, invoice) => {
+      this.assertOpen(invoice);
+
+      if (discount.greaterThan(invoice.totalAmount)) {
+        throw AppException.badRequest(
+          'A discount cannot exceed the amount billed',
+          ErrorCode.VALIDATION_ERROR,
+        );
+      }
+
+      await tx.studentFee.update({
+        where: { id },
+        data: {
+          discountAmount: discount,
+          waiverReason: dto.reason,
+          // Derived from the locked row, so a payment verified a moment ago
+          // is part of the calculation rather than overwritten by it.
+          status: deriveStatus({ ...invoice, discountAmount: discount }),
+        },
+      });
     });
-
-    return this.findOne(id);
   }
 
   /** Writes the invoice off entirely, leaving it visible in the ledger. */
   async waive(id: string, dto: WaiveFeeDto): Promise<StudentFeeDto> {
-    const existing = await this.getOrThrow(id);
-    this.assertOpen(existing);
+    return this.mutateLocked(id, async (tx, invoice) => {
+      this.assertOpen(invoice);
 
-    await this.prisma.studentFee.update({
-      where: { id },
-      data: {
-        status: StudentFeeStatus.WAIVED,
-        waiverReason: dto.reason,
-      },
+      await tx.studentFee.update({
+        where: { id },
+        data: { status: StudentFeeStatus.WAIVED, waiverReason: dto.reason },
+      });
     });
-
-    return this.findOne(id);
   }
 
-  /** For an invoice raised in error. Payments must be reversed first. */
+  /** For an invoice raised in error. Payments must be dealt with first. */
   async cancel(id: string, reason: string): Promise<StudentFeeDto> {
-    const existing = await this.getOrThrow(id);
+    return this.mutateLocked(id, async (tx, invoice) => {
+      if (invoice.status === StudentFeeStatus.CANCELLED) {
+        throw AppException.conflict('This invoice is already cancelled');
+      }
 
-    if (existing.status === StudentFeeStatus.CANCELLED) {
-      throw AppException.conflict('This invoice is already cancelled');
-    }
-    if (existing.amountPaid.greaterThan(0)) {
-      throw AppException.conflict(
-        'This invoice has payments against it. Reject those payments before cancelling.',
-      );
-    }
+      // Pending payments count too: one verified after cancellation would
+      // leave real money attached to a bill that no longer exists.
+      const live = await tx.payment.count({
+        where: {
+          studentFeeId: id,
+          status: { in: [PaymentStatus.PENDING, PaymentStatus.VERIFIED] },
+        },
+      });
+      if (live > 0) {
+        throw AppException.conflict(
+          'This invoice has payments against it. Reject those payments before cancelling.',
+        );
+      }
 
-    await this.prisma.studentFee.update({
-      where: { id },
-      data: { status: StudentFeeStatus.CANCELLED, waiverReason: reason },
+      await tx.studentFee.update({
+        where: { id },
+        data: { status: StudentFeeStatus.CANCELLED, waiverReason: reason },
+      });
+    });
+  }
+
+  /**
+   * Runs a change against a locked invoice. Payments recompute the same row,
+   * so every writer to an invoice goes through a lock on it.
+   */
+  private async mutateLocked(
+    id: string,
+    change: (tx: TxClient, invoice: StudentFee) => Promise<void>,
+  ): Promise<StudentFeeDto> {
+    await this.prisma.$transaction(async (tx) => {
+      if (!(await lockRow(tx, 'studentFee', id))) {
+        throw AppException.notFound('Invoice');
+      }
+      const invoice = await tx.studentFee.findUniqueOrThrow({ where: { id } });
+      await change(tx, invoice);
     });
 
     return this.findOne(id);
   }
 
-  /** Payments resolve their invoice through here so the rules stay in one place. */
   async getOrThrow(id: string): Promise<FeeRow> {
     const found = await this.prisma.studentFee.findUnique({
       where: { id },
@@ -255,7 +284,7 @@ export class StudentFeesService {
     return found;
   }
 
-  private assertOpen(invoice: FeeRow): void {
+  private assertOpen(invoice: Pick<StudentFee, 'status'>): void {
     if (
       invoice.status === StudentFeeStatus.WAIVED ||
       invoice.status === StudentFeeStatus.CANCELLED

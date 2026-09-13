@@ -4,7 +4,8 @@ import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
-import { TenantAwarePrisma } from '../database/prisma.service';
+import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
+import { lockRow } from '../database/row-lock';
 import {
   ClassArmDto,
   CreateClassArmDto,
@@ -125,9 +126,30 @@ export class ClassArmsService {
     await this.prisma.classArm.delete({ where: { id } });
   }
 
-  /** Used by student admission and promotion to check room before assigning. */
-  async assertHasRoom(armId: string, incoming = 1): Promise<void> {
-    const arm = await this.getOrThrow(armId);
+  /**
+   * Checks there is room for `incoming` more students.
+   *
+   * Pass the caller's transaction whenever the check guards a write: the arm
+   * row is then locked, so two admissions racing for the last seat serialise
+   * and the second one sees the first. Without a transaction it is a read-only
+   * preview, fine for validation that writes nothing.
+   */
+  async assertHasRoom(
+    armId: string,
+    incoming = 1,
+    tx?: TxClient,
+  ): Promise<void> {
+    if (tx && !(await lockRow(tx, 'classArm', armId))) {
+      throw AppException.notFound('Class arm');
+    }
+
+    const arm = await (tx ?? this.prisma).classArm.findUnique({
+      where: { id: armId },
+      include: WITH_CONTEXT,
+    });
+    if (!arm) {
+      throw AppException.notFound('Class arm');
+    }
     if (arm.capacity === null) return;
 
     if (arm._count.students + incoming > arm.capacity) {
