@@ -14,6 +14,7 @@ import { paginate, PaginatedDto } from '../common/dto/pagination.dto';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService } from '../auth/access-control.service';
+import { RolesService } from '../tenants/roles.service';
 import { PasswordService } from '../auth/password.service';
 import { TokenService } from '../auth/token.service';
 import { InjectPrisma } from '../database/prisma.tokens';
@@ -43,6 +44,7 @@ export class UsersService {
     private readonly email: EmailService,
     private readonly audit: AuditService,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly roles: RolesService,
   ) {}
 
   /** Staff of the current school. Tenant filtering comes from the Prisma guard. */
@@ -151,6 +153,8 @@ export class UsersService {
       throw AppException.badRequest(
         'The selected role does not exist in this school',
       );
+    // An invitation is a grant like any other: it cannot exceed the inviter.
+    await this.roles.assertMayAssign(dto.roleId, auth);
 
     const existingUser = await RequestContext.runAsSystem(() =>
       this.prisma.user.findUnique({ where: { email: dto.email } }),
@@ -323,6 +327,10 @@ export class UsersService {
         throw AppException.badRequest(
           'The selected role does not exist in this school',
         );
+      // Nobody edits their own access level, and nobody hands out a role
+      // carrying permissions they do not hold themselves.
+      this.roles.assertNotSelf(current.userId, auth);
+      await this.roles.assertMayAssign(dto.roleId, auth);
       await this.assertNotLastProprietor(current, auth);
     }
 

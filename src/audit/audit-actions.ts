@@ -26,6 +26,10 @@ export const AUDIT_ACTIONS = {
   USER_SUSPENDED: 'user.suspended',
   USER_REACTIVATED: 'user.reactivated',
   USER_ACCESS_REVOKED: 'user.access.revoked',
+  ROLE_CREATED: 'role.created',
+  ROLE_UPDATED: 'role.updated',
+  ROLE_DELETED: 'role.deleted',
+  ROLE_MEMBERS_REASSIGNED: 'role.members.reassigned',
   ROLE_PERMISSIONS_UPDATED: 'role.permissions.updated',
 
   // Academics

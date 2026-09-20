@@ -140,6 +140,12 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/schools/me` | `school.read` |
 | PATCH | `/schools/me` | `school.update` |
 | GET | `/schools/me/roles` | `roles.read` |
+| GET | `/schools/me/roles/:id` | `roles.read` |
+| POST | `/schools/me/roles` | `roles.update` + no escalation |
+| PATCH | `/schools/me/roles/:id` | `roles.update` |
+| PUT | `/schools/me/roles/:id/permissions` | `roles.update` + no escalation |
+| POST | `/schools/me/roles/:id/reassign-members` | `roles.update` |
+| DELETE | `/schools/me/roles/:id` | `roles.update` |
 | GET | `/schools/me/permissions` | `roles.read` |
 | GET | `/users` | `users.read` |
 | POST | `/users/invite` | `users.create` |
