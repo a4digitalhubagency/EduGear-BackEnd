@@ -132,6 +132,7 @@ model School {
   subjectResults       SubjectResult[]
   attendanceRecords    AttendanceRecord[]
   notifications        Notification[]
+  settings             SchoolSettings?
 
   @@index([status])
   @@map("schools")
@@ -1032,4 +1033,39 @@ model Notification {
   @@index([schoolId, userId, readAt])
   @@index([schoolId, userId, createdAt])
   @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// School settings (Phase 5)
+// ---------------------------------------------------------------------------
+
+/// Operational settings a school controls for itself. One row per school,
+/// created on first change — an absent row means "all defaults".
+model SchoolSettings {
+  id       String @id @default(uuid()) @db.Uuid
+  schoolId String @unique @db.Uuid
+
+  /// Prefixes admission numbers: "BSC" gives BSC/2025/0001. Null gives 2025/0001.
+  admissionNumberPrefix String?
+  /// Prefixes receipts, e.g. RCP/2025/000001.
+  receiptPrefix         String  @default("RCP")
+
+  /// Turns the parent portal off school-wide without revoking any login.
+  portalEnabled        Boolean @default(true)
+  /// Days before the same family can be reminded about fees again.
+  reminderCooldownDays Int     @default(7)
+  /// Default days to pay when a fee structure sets no due date.
+  invoiceDueDays       Int?
+
+  /// Some schools deliberately do not rank children.
+  reportShowPosition   Boolean @default(true)
+  /// Class highest, lowest and average beside each subject.
+  reportShowClassStats Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("school_settings")
 }

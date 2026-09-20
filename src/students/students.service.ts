@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, StudentStatus } from '@prisma/client';
 import { ClassArmsService } from '../academics/class-arms.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
@@ -57,6 +58,7 @@ export class StudentsService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly arms: ClassArmsService,
     private readonly importer: StudentImportService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   async admit(dto: AdmitStudentDto, schoolId: string): Promise<StudentDto> {
@@ -416,6 +418,7 @@ export class StudentsService {
           existing.map((row) => row.studentId),
           year,
         ),
+        (await this.settings.current()).admissionNumberPrefix,
       );
 
       try {

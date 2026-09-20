@@ -4,6 +4,7 @@ import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { LetterheadService } from '../tenants/letterhead.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { ReportCardAttendanceDto, ReportCardDto } from './dto/report-card.dto';
 import { mark } from './numbers';
 import { ordinal } from './ranking';
@@ -72,6 +73,7 @@ export class ReportCardsService {
   constructor(
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly letterheads: LetterheadService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   /** Lets the attendance module add its figures without a circular import. */
@@ -133,7 +135,7 @@ export class ReportCardsService {
     if (rows.length === 0) return [];
 
     const sheet = rows[0].resultSheet;
-    const [school, subjects, outOf, bands, nextTerm, formTeacher] =
+    const [school, subjects, outOf, bands, nextTerm, formTeacher, settings] =
       await Promise.all([
         this.letterheads.current(),
         this.prisma.subjectResult.findMany({
@@ -153,6 +155,7 @@ export class ReportCardsService {
           select: { startDate: true },
         }),
         this.formTeacherName(sheet.classArm.formTeacherId),
+        this.settings.current(),
       ]);
 
     return Promise.all(
@@ -179,22 +182,35 @@ export class ReportCardsService {
           nextTermBegins: nextTerm?.startDate ?? null,
           status: sheet.status,
           publishedAt: sheet.publishedAt,
+          // A school that does not rank its children gets a card with no
+          // positions at all — including the per-subject ones.
           subjects: mine.map((subject) => ({
             subjectName: subject.subjectName,
             components: subject.componentScores as unknown as StoredComponent[],
             total: mark(subject.totalScore),
             grade: subject.grade,
             remark: subject.remark,
-            position: subject.position,
-            positionLabel: ordinal(subject.position),
-            classHighest: mark(subject.classHighest),
-            classLowest: mark(subject.classLowest),
-            classAverage: mark(subject.classAverage),
+            position: settings.reportShowPosition ? subject.position : null,
+            positionLabel: settings.reportShowPosition
+              ? ordinal(subject.position)
+              : null,
+            classHighest: settings.reportShowClassStats
+              ? mark(subject.classHighest)
+              : null,
+            classLowest: settings.reportShowClassStats
+              ? mark(subject.classLowest)
+              : null,
+            classAverage: settings.reportShowClassStats
+              ? mark(subject.classAverage)
+              : null,
           })),
           totalScore: mark(row.totalScore),
           averageScore: mark(row.averageScore),
-          position: row.position,
-          positionLabel: row.position ? ordinal(row.position) : null,
+          position: settings.reportShowPosition ? row.position : null,
+          positionLabel:
+            settings.reportShowPosition && row.position
+              ? ordinal(row.position)
+              : null,
           outOf,
           subjectCount: row.subjectCount,
           passes: mine.filter((subject) => subject.isPass).length,

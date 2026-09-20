@@ -2,11 +2,13 @@
 
 Multi-tenant school management SaaS for private secondary schools, by A4 Technologies.
 
-**Status: Phases 0–4 complete.** The backend foundation (auth, multi-tenancy, RBAC, audit), Student
-Management (sessions, terms, classes, arms, students, guardians, promotion, spreadsheet import),
-Finance (fee structures, invoicing, verified payments, receipts, statements, debtors, reminders),
-Results (subjects, assessment, scores, computation, approval, report cards), attendance and the
-Parent Portal are live. Administration is next.
+**Status: Phases 0–4 complete; Phase 5 (Administration) in progress.** The backend foundation
+(auth, multi-tenancy, RBAC, audit), Student Management (sessions, terms, classes, arms, students,
+guardians, promotion, spreadsheet import), Finance (fee structures, invoicing, verified payments,
+receipts, statements, debtors, reminders), Results (subjects, assessment, scores, computation,
+approval, report cards), attendance and the Parent Portal are live. Administration has role
+management and school settings; academic configuration and audit views already exist from earlier
+phases.
 
 ---
 
@@ -146,6 +148,8 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | PUT | `/schools/me/roles/:id/permissions` | `roles.update` + no escalation |
 | POST | `/schools/me/roles/:id/reassign-members` | `roles.update` |
 | DELETE | `/schools/me/roles/:id` | `roles.update` |
+| GET | `/schools/me/settings` | `school.read` |
+| PATCH | `/schools/me/settings` | `school.update` |
 | GET | `/schools/me/permissions` | `roles.read` |
 | GET | `/users` | `users.read` |
 | POST | `/users/invite` | `users.create` |
@@ -531,3 +535,35 @@ Known limit: a membership has one role per school, so a teacher who is also a pa
 school cannot hold both logins. Parents at a *different* school than they work at are fine.
 
 Next: **Phase 5 — Administration.**
+
+---
+
+## Administration (Phase 5, in progress)
+
+**Roles.** Create, rename, re-permission and delete custom roles; copy an existing role; move a
+role's members elsewhere so a role in use can be emptied then deleted. One rule governs all of it,
+and role assignment and invitations too: **you cannot grant a permission you do not hold**, and
+**nobody changes their own role**. Standard roles can be re-permissioned but not renamed or deleted;
+`PROPRIETOR` always holds everything, because it is how a school recovers from any other change —
+which is also why no school can lock itself out. A permission change drops every holder's cached
+snapshot, so it takes effect on the next request.
+
+`portal.access` is the single exception to the granting rule: no member of staff holds it, since it
+marks the Parent role rather than granting a staff capability. It is ignored only for the standard
+Parent role and refused on any other.
+
+**Settings** (`/schools/me/settings`) — each one changes behaviour, and changing one never rewrites
+what was already issued:
+
+| Setting | Effect |
+| --- | --- |
+| `admissionNumberPrefix` | `BSC/2025/0001` instead of `2025/0001`. The year's sequence continues across a change. |
+| `receiptPrefix` | Same, for receipts (default `RCP`). |
+| `portalEnabled` | Closes the parent portal school-wide without revoking a single login. |
+| `reminderCooldownDays` | Default cooldown for fee reminders; a request can still override it. |
+| `invoiceDueDays` | Due date for invoices whose fee structure sets none. Never overrides a real one. |
+| `reportShowPosition` | Some schools deliberately do not rank children; hides class and subject positions. |
+| `reportShowClassStats` | Hides class highest, lowest and average beside each subject. |
+
+A school with no settings row has the defaults — reading never writes one, so nothing needed
+back-filling for schools registered before this existed.

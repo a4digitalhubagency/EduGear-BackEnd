@@ -12,6 +12,7 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { EmailMessage, EmailService } from '../notifications/email.service';
 import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import {
   ReminderChildDto,
   ReminderHistoryDto,
@@ -26,7 +27,6 @@ import { ZERO, balance, sum, toAmount } from './fee-math';
 import { FinanceReportsService, OwingInvoice } from './finance-reports.service';
 import { naira } from './naira';
 
-const DEFAULT_COOLDOWN_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface Debtor {
@@ -65,6 +65,7 @@ export class PaymentRemindersService {
     private readonly reports: FinanceReportsService,
     private readonly email: EmailService,
     private readonly notifications: InAppNotificationsService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   async send(dto: SendRemindersDto): Promise<SendRemindersResultDto> {
@@ -90,11 +91,10 @@ export class PaymentRemindersService {
       eligible.push(debtor);
     }
 
-    eligible = await this.applyCooldown(
-      eligible,
-      dto.cooldownDays ?? DEFAULT_COOLDOWN_DAYS,
-      skipped,
-    );
+    // The request wins; otherwise the school's own setting.
+    const cooldownDays =
+      dto.cooldownDays ?? (await this.settings.current()).reminderCooldownDays;
+    eligible = await this.applyCooldown(eligible, cooldownDays, skipped);
 
     const { recipients, unreachable } = this.groupByGuardian(eligible);
 

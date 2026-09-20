@@ -129,7 +129,9 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 ## Status
 
-Phases 0–4 are complete. **Phase 5 (Administration) is next.**
+Phases 0–4 are complete. **Phase 5 (Administration) is in progress**: role management and school
+settings are done; the rest of its brief (user management, academic configuration, audit views) was
+delivered by earlier phases.
 
 Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/),
 [src/finance/](src/finance/) and [src/results/](src/results/): pure domain rules in their own file with a `*.spec.ts`, a service
@@ -189,3 +191,20 @@ send time.
 `lockRow(tx, 'studentFee' | 'classArm' | 'resultSheet', id)` in
 [row-lock.ts](src/database/row-lock.ts). Take it at the start of any transaction whose check guards
 its write — capacity, overpayment, a sheet's DRAFT status. `lockRows` sorts ids to avoid deadlock.
+
+### Granting permissions (Phase 5)
+
+**You cannot grant a permission you do not hold.** [roles.service.ts](src/tenants/roles.service.ts)
+enforces it for role creation, re-permissioning, role assignment and invitations — call
+`assertMayAssign` / `assertNotSelf` from anywhere new that hands out access. Nobody changes their own
+role. `PROPRIETOR` is immutable and undeletable on purpose: it is the recovery path, and the reason a
+school cannot lock itself out. `portal.access` is exempt from the comparison for the standard Parent
+role only, because no member of staff holds it.
+
+### Settings
+
+[school-settings.service.ts](src/tenants/school-settings.service.ts) — an absent row means defaults,
+and reads never write one. Anything new that reads a setting should degrade to the default rather
+than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
+[admission-number.ts](src/students/admission-number.ts) and
+[receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.

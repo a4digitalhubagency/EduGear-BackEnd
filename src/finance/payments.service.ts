@@ -13,6 +13,7 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRow } from '../database/row-lock';
 import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { naira } from './naira';
 import {
   PaymentDto,
@@ -45,6 +46,7 @@ export class PaymentsService {
   constructor(
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly notifications: InAppNotificationsService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   /**
@@ -328,8 +330,10 @@ export class PaymentsService {
   private async nextReceiptNumber(tx: TxClient, paidAt: Date): Promise<string> {
     const year = paidAt.getUTCFullYear();
 
+    // Matched on the year, not the prefix: a school that changes its prefix
+    // must carry on from the last number, not start again at one.
     const issued = await tx.payment.findMany({
-      where: { receiptNumber: { startsWith: `RCP/${year}/` } },
+      where: { receiptNumber: { contains: `/${year}/` } },
       select: { receiptNumber: true },
     });
 
@@ -339,6 +343,7 @@ export class PaymentsService {
         issued.map((row) => row.receiptNumber),
         year,
       ),
+      (await this.settings.current()).receiptPrefix,
     );
   }
 

@@ -3,10 +3,15 @@
  * payment has no receipt to present. They are unique per school and shaped
  * `RCP/<year>/<6-digit sequence>` so a bursar can read one over the phone.
  */
-export const RECEIPT_NUMBER_PATTERN = /^RCP\/(\d{4})\/(\d{6,})$/;
+/** Any prefix, so changing it does not restart the year's numbering. */
+export const RECEIPT_NUMBER_PATTERN = /^(?:.*\/)?(\d{4})\/(\d{6,})$/;
 
-export function formatReceiptNumber(year: number, sequence: number): string {
-  return `RCP/${year}/${String(sequence).padStart(6, '0')}`;
+export function formatReceiptNumber(
+  year: number,
+  sequence: number,
+  prefix = 'RCP',
+): string {
+  return `${prefix}/${year}/${String(sequence).padStart(6, '0')}`;
 }
 
 /** Highest sequence already issued in `year`, ignoring anything off-pattern. */

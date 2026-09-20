@@ -8,6 +8,7 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRows } from '../database/row-lock';
 import { NG_PHONE_REGEX } from '../tenants/dto/school.dto';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { formatAdmissionNumber, nextSequence } from './admission-number';
 import { BulkAdmitStudentsDto, MAX_BULK_STUDENTS } from './dto/bulk.dto';
 import {
@@ -112,7 +113,10 @@ const WRITE_ATTEMPTS = 3;
  */
 @Injectable()
 export class StudentImportService {
-  constructor(@InjectPrisma() private readonly prisma: TenantAwarePrisma) {}
+  constructor(
+    @InjectPrisma() private readonly prisma: TenantAwarePrisma,
+    private readonly settings: SchoolSettingsService,
+  ) {}
 
   async importRows(
     dto: ImportStudentsDto,
@@ -1011,6 +1015,7 @@ export class StudentImportService {
         .map((state) => state.data.admissionDate!.getUTCFullYear()),
     );
 
+    const { admissionNumberPrefix } = await this.settings.current();
     const next = new Map<number, number>();
     for (const year of years) {
       const existing = await client.student.findMany({
@@ -1031,7 +1036,7 @@ export class StudentImportService {
       const year = state.data.admissionDate!.getUTCFullYear();
       const sequence = next.get(year) ?? 1;
       next.set(year, sequence + 1);
-      return formatAdmissionNumber(year, sequence);
+      return formatAdmissionNumber(year, sequence, admissionNumberPrefix);
     });
   }
 }

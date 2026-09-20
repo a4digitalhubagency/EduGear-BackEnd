@@ -21,11 +21,20 @@ export class ReportCardSubjectDto {
   @ApiProperty() total: number;
   @ApiPropertyOptional({ nullable: true }) grade: string | null;
   @ApiPropertyOptional({ nullable: true }) remark: string | null;
-  @ApiProperty() position: number;
-  @ApiProperty({ example: '3rd' }) positionLabel: string;
-  @ApiProperty() classHighest: number;
-  @ApiProperty() classLowest: number;
-  @ApiProperty() classAverage: number;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Null when the school hides positions',
+  })
+  position: number | null;
+  @ApiPropertyOptional({ nullable: true, example: '3rd' })
+  positionLabel: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Null when the school hides class figures',
+  })
+  classHighest: number | null;
+  @ApiPropertyOptional({ nullable: true }) classLowest: number | null;
+  @ApiPropertyOptional({ nullable: true }) classAverage: number | null;
 }
 
 export class ReportCardStudentDto {

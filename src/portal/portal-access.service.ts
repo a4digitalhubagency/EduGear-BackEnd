@@ -7,6 +7,7 @@ import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { EmailService } from '../notifications/email.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { UsersService } from '../users/users.service';
 import { PortalAccessDto } from './dto/portal.dto';
 
@@ -25,6 +26,7 @@ export class PortalAccessService {
     private readonly users: UsersService,
     private readonly email: EmailService,
     private readonly accessControl: AccessControlService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   async status(guardianId: string): Promise<PortalAccessDto> {
@@ -56,6 +58,7 @@ export class PortalAccessService {
         'This parent has no email address on file. Add one before inviting them to the portal.',
       );
     }
+    await this.settings.assertPortalEnabled();
     if (guardian.students.length === 0) {
       throw AppException.conflict(
         'This parent is not linked to any student, so the portal would show nothing',

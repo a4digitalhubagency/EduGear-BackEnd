@@ -30,6 +30,7 @@ import {
   sum,
   toAmount,
 } from './fee-math';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { FeeStructuresService } from './fee-structures.service';
 import { naira } from './naira';
 
@@ -54,6 +55,7 @@ export class StudentFeesService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly structures: FeeStructuresService,
     private readonly notifications: InAppNotificationsService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   /**
@@ -91,6 +93,12 @@ export class StudentFeesService {
     const billed = new Set(already.map((row) => row.studentId));
     const targets = students.filter((student) => !billed.has(student.id));
 
+    // Only when neither the request nor the structure names a date.
+    const defaultDueDate =
+      dto.dueDate ??
+      structure.dueDate ??
+      (await this.settings.defaultDueDate());
+
     const created: string[] = [];
     if (targets.length > 0) {
       await this.prisma.$transaction(async (tx) => {
@@ -105,7 +113,7 @@ export class StudentFeesService {
               sessionId: structure.sessionId,
               termId: structure.termId,
               totalAmount: total,
-              dueDate: dto.dueDate ?? structure.dueDate,
+              dueDate: dto.dueDate ?? structure.dueDate ?? defaultDueDate,
               status: total.isZero()
                 ? StudentFeeStatus.PAID
                 : StudentFeeStatus.UNPAID,

@@ -10,6 +10,12 @@ describe('formatReceiptNumber', () => {
   });
 });
 
+describe('formatReceiptNumber with a school prefix', () => {
+  it('uses the prefix it is given', () => {
+    expect(formatReceiptNumber(2025, 7, 'BSC')).toBe('BSC/2025/000007');
+  });
+});
+
 describe('nextReceiptSequence', () => {
   it('starts at 1', () => {
     expect(nextReceiptSequence([], 2025)).toBe(1);
@@ -23,6 +29,12 @@ describe('nextReceiptSequence', () => {
 
   it('restarts each year', () => {
     expect(nextReceiptSequence(['RCP/2024/000500'], 2025)).toBe(1);
+  });
+
+  it('continues the sequence when the prefix changes', () => {
+    expect(
+      nextReceiptSequence(['RCP/2025/000004', 'BSC/2025/000005'], 2025),
+    ).toBe(6);
   });
 
   it('ignores anything off-pattern', () => {

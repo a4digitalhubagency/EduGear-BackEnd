@@ -17,6 +17,7 @@ export const AUDIT_ACTIONS = {
   // Tenant lifecycle
   SCHOOL_REGISTERED: 'school.registered',
   SCHOOL_UPDATED: 'school.updated',
+  SCHOOL_SETTINGS_UPDATED: 'school.settings.updated',
 
   // Users and access
   USER_INVITED: 'user.invited',

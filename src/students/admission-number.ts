@@ -4,10 +4,19 @@
  * "2025/0001" — which is what Nigerian secondary schools already write on a
  * file, and it sorts correctly as text within a year.
  */
-export const ADMISSION_NUMBER_PATTERN = /^(\d{4})\/(\d{4,})$/;
+/**
+ * Matches a generated number with or without a school's prefix, so changing the
+ * prefix mid-year continues the sequence instead of restarting it at 0001.
+ */
+export const ADMISSION_NUMBER_PATTERN = /^(?:.*\/)?(\d{4})\/(\d{4,})$/;
 
-export function formatAdmissionNumber(year: number, sequence: number): string {
-  return `${year}/${String(sequence).padStart(4, '0')}`;
+export function formatAdmissionNumber(
+  year: number,
+  sequence: number,
+  prefix?: string | null,
+): string {
+  const core = `${year}/${String(sequence).padStart(4, '0')}`;
+  return prefix ? `${prefix}/${core}` : core;
 }
 
 /**

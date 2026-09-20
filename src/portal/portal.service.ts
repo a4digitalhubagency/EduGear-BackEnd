@@ -25,6 +25,7 @@ import { PaymentsService } from '../finance/payments.service';
 import { ReportCardDto } from '../results/dto/report-card.dto';
 import { ordinal } from '../results/ranking';
 import { ReportCardsService } from '../results/report-cards.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
 import {
   PortalChildDto,
   PortalLatestResultDto,
@@ -50,6 +51,7 @@ export class PortalService {
     private readonly payments: PaymentsService,
     private readonly reportCards: ReportCardsService,
     private readonly attendance: AttendanceService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   async me(): Promise<PortalMeDto> {
@@ -254,6 +256,9 @@ export class PortalService {
   private async guardian() {
     const auth = RequestContext.getAuth();
     if (!auth) throw AppException.unauthorized();
+
+    // The school can close the portal without revoking anybody's login.
+    await this.settings.assertPortalEnabled();
 
     const guardian = await this.prisma.guardian.findFirst({
       where: { userId: auth.userId },

@@ -9,6 +9,11 @@ describe('formatAdmissionNumber', () => {
   it('does not truncate a school that passes four digits', () => {
     expect(formatAdmissionNumber(2025, 12345)).toBe('2025/12345');
   });
+
+  it('puts the school’s prefix in front when it has one', () => {
+    expect(formatAdmissionNumber(2025, 1, 'BSC')).toBe('BSC/2025/0001');
+    expect(formatAdmissionNumber(2025, 1, null)).toBe('2025/0001');
+  });
 });
 
 describe('nextSequence', () => {
@@ -26,6 +31,11 @@ describe('nextSequence', () => {
 
   it('ignores hand-typed numbers rather than guessing at them', () => {
     expect(nextSequence(['ADM-17', 'BSC/2025/4', '2025/0002'], 2025)).toBe(3);
+  });
+
+  it('continues the year’s sequence when the prefix changes', () => {
+    // The school added a "BSC" prefix after admitting two students.
+    expect(nextSequence(['2025/0001', 'BSC/2025/0002'], 2025)).toBe(3);
   });
 
   it('is unaffected by a gap in the sequence', () => {
