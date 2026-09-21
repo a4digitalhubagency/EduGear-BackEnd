@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import { MulterError } from 'multer';
+import { MAX_UPLOAD_BYTES, formatBytes } from '../../files/file-policy';
 import { Request, Response } from 'express';
 import { AppConfig } from '../../config/configuration';
 import {
@@ -112,6 +114,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
         errorCode: ErrorCode.INTERNAL_ERROR,
         message: exception.message,
+      };
+    }
+
+    // Multer rejects an oversized upload mid-stream, before any handler runs.
+    if (exception instanceof MulterError) {
+      return {
+        ...base,
+        statusCode:
+          exception.code === 'LIMIT_FILE_SIZE'
+            ? HttpStatus.PAYLOAD_TOO_LARGE
+            : HttpStatus.BAD_REQUEST,
+        errorCode:
+          exception.code === 'LIMIT_FILE_SIZE'
+            ? ErrorCode.PAYLOAD_TOO_LARGE
+            : ErrorCode.VALIDATION_ERROR,
+        message:
+          exception.code === 'LIMIT_FILE_SIZE'
+            ? `That file is larger than the ${formatBytes(MAX_UPLOAD_BYTES)} upload limit`
+            : 'The upload could not be read',
       };
     }
 

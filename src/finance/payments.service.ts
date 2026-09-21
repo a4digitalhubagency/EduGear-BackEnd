@@ -13,6 +13,7 @@ import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
 import { lockRow } from '../database/row-lock';
 import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
+import { FilesService } from '../files/files.service';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { naira } from './naira';
 import {
@@ -47,6 +48,7 @@ export class PaymentsService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly notifications: InAppNotificationsService,
     private readonly settings: SchoolSettingsService,
+    private readonly files: FilesService,
   ) {}
 
   /**
@@ -80,7 +82,7 @@ export class PaymentsService {
 
       await this.assertNotOverpaying(tx, invoice, amount);
 
-      return tx.payment.create({
+      const payment = await tx.payment.create({
         data: {
           // Prisma's types require the tenant column on create. Supplying it
           // is safe: the guard rejects any value other than the active tenant.
@@ -101,6 +103,17 @@ export class PaymentsService {
         },
         include: WITH_DETAIL,
       });
+
+      // Inside the transaction: evidence pointing at another child's file must
+      // stop the payment, not be discovered after it exists.
+      await this.files.attachToPayment(
+        tx,
+        dto.evidenceUrl,
+        payment.id,
+        invoice.studentId,
+      );
+
+      return payment;
     });
 
     return this.toDto(created);

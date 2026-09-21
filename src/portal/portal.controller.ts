@@ -8,9 +8,14 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -20,6 +25,8 @@ import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { CurrentSchool, RequirePermissions } from '../common/decorators';
+import { FileDto } from '../files/dto/file.dto';
+import { MAX_UPLOAD_BYTES } from '../files/file-policy';
 import { ReceiptDto, StatementDto } from '../finance/dto/document.dto';
 import { PaymentDto } from '../finance/dto/payment.dto';
 import {
@@ -121,6 +128,34 @@ export class PortalController {
       metadata: { method: payment.method, reference: payment.reference },
     });
     return payment;
+  }
+
+  @Post('children/:studentId/evidence')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload proof of payment',
+    description:
+      'Send the returned url as evidenceUrl when submitting the payment.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiCreatedResponse({ type: FileDto })
+  uploadEvidence(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentSchool() schoolId: string,
+  ): Promise<FileDto> {
+    return this.portal.uploadEvidence(studentId, file, schoolId);
   }
 
   @Get('children/:studentId/results')

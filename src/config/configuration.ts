@@ -65,6 +65,7 @@ export interface AppConfig {
     secretAccessKey?: string;
     bucket?: string;
     publicUrl?: string;
+    localDir: string;
   };
 }
 
@@ -125,6 +126,7 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
       secretAccessKey: env.R2_SECRET_ACCESS_KEY,
       bucket: env.R2_BUCKET,
       publicUrl: env.R2_PUBLIC_URL,
+      localDir: env.STORAGE_LOCAL_DIR,
     },
   };
 }

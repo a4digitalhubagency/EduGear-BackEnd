@@ -29,6 +29,12 @@ if (redisUrl) {
   delete process.env.REDIS_URL;
 }
 
+// Uploads land in a throwaway directory, never in the repo.
+process.env.STORAGE_LOCAL_DIR = path.join(
+  process.env.TMPDIR ?? '/tmp',
+  'edugear-test-storage',
+);
+
 process.env.EMAIL_PROVIDER = 'console';
 // Rate limiting has a dedicated suite (rate-limit.e2e-spec.ts, which sets its own
 // limits before loading the app); everywhere else it must not interfere. These

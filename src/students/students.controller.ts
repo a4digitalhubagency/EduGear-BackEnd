@@ -11,9 +11,13 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiProduces,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -22,6 +26,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { StudentStatus } from '@prisma/client';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../common/constants/permissions';
@@ -52,6 +57,7 @@ import {
   ImportStudentsCsvDto,
   ImportStudentsDto,
 } from './dto/import.dto';
+import { MAX_UPLOAD_BYTES } from '../files/file-policy';
 import { buildTemplateCsv } from './import/import-columns';
 import { StudentImportService } from './student-import.service';
 import { StudentsService } from './students.service';
@@ -318,5 +324,59 @@ export class StudentsController {
         guardiansMatched: report.guardiansMatched,
       },
     });
+  }
+
+  @Post(':id/photo')
+  @RequirePermissions(PERMISSIONS.STUDENTS_UPDATE)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Set a student’s photo',
+    description:
+      'Replaces any previous photo, which is deleted rather than left behind.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOkResponse({ type: StudentDto })
+  async setPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentSchool() schoolId: string,
+  ): Promise<StudentDto> {
+    const student = await this.students.setPhoto(id, file, schoolId);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_UPDATED,
+      entityType: 'Student',
+      entityId: id,
+      description: `Updated the photo for ${student.fullName}`,
+      metadata: { fields: ['photoUrl'] },
+    });
+    return student;
+  }
+
+  @Delete(':id/photo')
+  @RequirePermissions(PERMISSIONS.STUDENTS_UPDATE)
+  @ApiOperation({ summary: 'Remove a student’s photo' })
+  @ApiOkResponse({ type: StudentDto })
+  async removePhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<StudentDto> {
+    const student = await this.students.removePhoto(id);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_UPDATED,
+      entityType: 'Student',
+      entityId: id,
+      metadata: { fields: ['photoUrl'] },
+    });
+    return student;
   }
 }

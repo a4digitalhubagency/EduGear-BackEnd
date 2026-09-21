@@ -46,6 +46,7 @@ export const TENANT_SCOPED_MODELS: Readonly<Record<string, TenantModelConfig>> =
     AttendanceRecord: { field: 'schoolId' },
     Notification: { field: 'schoolId' },
     SchoolSettings: { field: 'schoolId' },
+    FileObject: { field: 'schoolId' },
     AuditLog: { field: 'schoolId', nullable: true },
   };
 

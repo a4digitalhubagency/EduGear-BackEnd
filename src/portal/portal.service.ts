@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  FilePurpose,
   PaymentMethod,
   PaymentStatus,
   Prisma,
@@ -11,6 +12,8 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
+import { FileDto } from '../files/dto/file.dto';
+import { FilesService } from '../files/files.service';
 import { ReceiptDto, StatementDto } from '../finance/dto/document.dto';
 import { PaymentDto } from '../finance/dto/payment.dto';
 import {
@@ -52,6 +55,7 @@ export class PortalService {
     private readonly reportCards: ReportCardsService,
     private readonly attendance: AttendanceService,
     private readonly settings: SchoolSettingsService,
+    private readonly files: FilesService,
   ) {}
 
   async me(): Promise<PortalMeDto> {
@@ -174,6 +178,35 @@ export class PortalService {
         evidenceUrl: dto.evidenceUrl ?? null,
         paidAt: dto.paidAt,
         note: 'Submitted by a parent through the portal',
+      },
+      schoolId,
+    );
+  }
+
+  /**
+   * A parent's photo of a teller. Uploaded against their own child, so the
+   * same ward check that governs everything else governs who can read it back.
+   */
+  async uploadEvidence(
+    studentId: string,
+    file: Express.Multer.File | undefined,
+    schoolId: string,
+  ): Promise<FileDto> {
+    await this.assertWard(studentId);
+    if (!file) {
+      throw AppException.badRequest(
+        'No file was attached — send it as the "file" part',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+
+    return this.files.upload(
+      {
+        buffer: file.buffer,
+        originalName: file.originalname,
+        declaredType: file.mimetype,
+        purpose: FilePurpose.PAYMENT_EVIDENCE,
+        link: { type: 'Student', id: studentId },
       },
       schoolId,
     );

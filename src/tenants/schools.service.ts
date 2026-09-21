@@ -122,6 +122,18 @@ export class SchoolsService {
     return this.toDto(school);
   }
 
+  /** Used by the logo endpoints, which own the file lifecycle themselves. */
+  async setLogo(logoUrl: string | null): Promise<SchoolDto> {
+    const schoolId = RequestContext.getTenantId();
+    if (!schoolId) throw AppException.unauthorized();
+
+    await this.prisma.school.update({
+      where: { id: schoolId },
+      data: { logoUrl },
+    });
+    return this.getCurrentSchool();
+  }
+
   async listRoles() {
     const roles = await this.prisma.role.findMany({
       orderBy: { name: 'asc' },

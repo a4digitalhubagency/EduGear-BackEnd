@@ -203,6 +203,10 @@ export class EnvironmentVariables {
   @IsOptional()
   R2_PUBLIC_URL?: string;
 
+  /// Where uploads go when R2 is not configured. Development and tests only.
+  @IsString()
+  STORAGE_LOCAL_DIR = 'storage';
+
   // Optional so local development and CI can run without Redis; required in
   // production, where falling back to per-instance state would be silent breakage.
   @IsString()

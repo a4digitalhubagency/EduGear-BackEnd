@@ -26,6 +26,7 @@ import { PrismaModule } from './database/prisma.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { FilesModule } from './files/files.module';
 import { FinanceModule } from './finance/finance.module';
 import { GuardiansModule } from './guardians/guardians.module';
 import { PortalModule } from './portal/portal.module';
@@ -107,6 +108,7 @@ import { UsersModule } from './users/users.module';
 
     RedisModule,
     PrismaModule,
+    FilesModule,
     NotificationsModule,
     AuditModule,
     AuthModule,

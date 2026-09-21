@@ -257,6 +257,13 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | POST | `/portal/children/:studentId/payments` | `portal.access` + own child |
 | GET | `/portal/notifications` | `portal.access` |
 | POST | `/portal/notifications/:id/read`, `/portal/notifications/read-all` | `portal.access` |
+| POST | `/files` | per purpose (`students.update`, `school.update`, `finance.create`) |
+| GET | `/files?purpose=` | per purpose |
+| GET | `/files/:id` | per purpose, or the parent it belongs to |
+| DELETE | `/files/:id` | per purpose; refused while linked to a payment |
+| POST / DELETE | `/students/:id/photo` | `students.update` |
+| POST / DELETE | `/schools/me/logo` | `school.update` |
+| POST | `/portal/children/:studentId/evidence` | `portal.access` + own child |
 | GET | `/audit-logs` | `audit.read` |
 | GET | `/health` | public |
 
@@ -428,6 +435,7 @@ src/
   results/         subjects, assessment, scores, result sheets, report cards
   attendance/      daily registers and term summaries
   portal/          parent logins and the parent-facing API
+  files/           uploads, byte-level checks and storage drivers
   audit/           audit service + trail endpoint
   notifications/   email (Resend / console) and the in-app inbox
   health/          liveness, database and cache readiness
@@ -567,3 +575,35 @@ what was already issued:
 
 A school with no settings row has the defaults — reading never writes one, so nothing needed
 back-filling for schools registered before this existed.
+
+---
+
+## Files
+
+Uploads pass **through the API** rather than going straight to the bucket, because that is the only
+way to read a file before storing it. The purpose decides what is allowed; the **bytes** decide what
+the file is. A declared content type is a claim, used only to catch a disagreement — so an
+executable renamed `photo.jpg` is refused, and a PNG sent as `image/jpeg` is reported rather than
+quietly accepted.
+
+| | |
+| --- | --- |
+| Student photo | JPEG/PNG/WebP, 5 MB |
+| School logo | JPEG/PNG/WebP, 2 MB |
+| Payment evidence | JPEG/PNG/WebP/PDF, 10 MB |
+
+- Keys are `schools/<schoolId>/<purpose>/<uuid>.<ext>`, built server-side. A filename never decides
+  where bytes land; it survives only as a display name, stripped of control characters, quotes and
+  anything resembling a path.
+- **Nothing is public.** Reads go back through the API: staff by permission, a parent for their own
+  child or for what they uploaded. Anything else is a 404, not a 403.
+- Replacing a photo deletes the one before it; deleting a student takes their photo with them. Rows
+  are removed before bytes, because a row pointing at nothing is worse than bytes nothing points at —
+  and the orphan is logged.
+- Evidence attached to a payment is validated **inside the payment's transaction**, so a payment can
+  never come into being pointing at another child's file, and that file then cannot be deleted.
+- Storage is Cloudflare R2 when configured, otherwise the local disk for development and tests.
+  Production without R2 refuses uploads rather than writing to an ephemeral container disk — the rest
+  of the system is unaffected, so a deploy never fails over a feature a school may not use.
+
+Not done: virus scanning, image re-encoding to strip EXIF, and per-school storage quotas.

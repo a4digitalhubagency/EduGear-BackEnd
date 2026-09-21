@@ -208,3 +208,12 @@ and reads never write one. Anything new that reads a setting should degrade to t
 than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
 [admission-number.ts](src/students/admission-number.ts) and
 [receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.
+
+### Files
+
+[file-policy.ts](src/files/file-policy.ts) is the pure layer: what each purpose allows, byte
+signatures, name sanitisation, key construction. **Never trust a declared content type** — `checkFile`
+reads the bytes. Keys come from `storageKey` and contain no caller input.
+[files.service.ts](src/files/files.service.ts) owns content policy and read access; controllers own
+the permission check, which is why the portal can upload evidence without holding `finance.create`.
+Write bytes before the row, delete the row before the bytes.

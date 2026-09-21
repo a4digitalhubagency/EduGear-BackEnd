@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, StudentStatus } from '@prisma/client';
+import { FilePurpose, Prisma, StudentStatus } from '@prisma/client';
 import { ClassArmsService } from '../academics/class-arms.service';
+import { FilesService } from '../files/files.service';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
@@ -59,6 +60,7 @@ export class StudentsService {
     private readonly arms: ClassArmsService,
     private readonly importer: StudentImportService,
     private readonly settings: SchoolSettingsService,
+    private readonly files: FilesService,
   ) {}
 
   async admit(dto: AdmitStudentDto, schoolId: string): Promise<StudentDto> {
@@ -236,6 +238,54 @@ export class StudentsService {
     return this.toDto(updated);
   }
 
+  /** Stores the photo, points the student at it, and drops the old one. */
+  async setPhoto(
+    id: string,
+    file: Express.Multer.File | undefined,
+    schoolId: string,
+  ): Promise<StudentDto> {
+    await this.getOrThrow(id);
+    if (!file) {
+      throw AppException.badRequest(
+        'No photo was attached — send it as the "file" part',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+
+    const uploaded = await this.files.replaceLinked(
+      FilePurpose.STUDENT_PHOTO,
+      { type: 'Student', id },
+      {
+        buffer: file.buffer,
+        originalName: file.originalname,
+        declaredType: file.mimetype,
+      },
+      schoolId,
+    );
+
+    const updated = await this.prisma.student.update({
+      where: { id },
+      data: { photoUrl: uploaded.url },
+      include: WITH_ARM,
+    });
+    return this.toDto(updated);
+  }
+
+  async removePhoto(id: string): Promise<StudentDto> {
+    await this.getOrThrow(id);
+    await this.files.removeLinked(FilePurpose.STUDENT_PHOTO, {
+      type: 'Student',
+      id,
+    });
+
+    const updated = await this.prisma.student.update({
+      where: { id },
+      data: { photoUrl: null },
+      include: WITH_ARM,
+    });
+    return this.toDto(updated);
+  }
+
   async remove(id: string): Promise<void> {
     await this.getOrThrow(id);
 
@@ -263,6 +313,11 @@ export class StudentsService {
       );
     }
 
+    // The photo has no meaning without the student.
+    await this.files.removeLinked(FilePurpose.STUDENT_PHOTO, {
+      type: 'Student',
+      id,
+    });
     await this.prisma.student.delete({ where: { id } });
   }
 

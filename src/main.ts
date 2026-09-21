@@ -54,6 +54,7 @@ async function bootstrap(): Promise<void> {
         .addTag('Finance')
         .addTag('Results')
         .addTag('Attendance')
+        .addTag('Files')
         .addTag('Parent Portal')
         .addTag('Audit')
         .addTag('Health')

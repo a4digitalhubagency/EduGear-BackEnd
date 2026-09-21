@@ -133,6 +133,7 @@ model School {
   attendanceRecords    AttendanceRecord[]
   notifications        Notification[]
   settings             SchoolSettings?
+  files                FileObject[]
 
   @@index([status])
   @@map("schools")
@@ -1068,4 +1069,45 @@ model SchoolSettings {
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@map("school_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Uploaded files (Phase 5)
+// ---------------------------------------------------------------------------
+
+enum FilePurpose {
+  STUDENT_PHOTO
+  SCHOOL_LOGO
+  PAYMENT_EVIDENCE
+}
+
+/// A file the school uploaded, wherever the bytes live. The row is the record
+/// of ownership and purpose; `key` locates the object in the bucket.
+model FileObject {
+  id                     String      @id @default(uuid()) @db.Uuid
+  schoolId               String      @db.Uuid
+  purpose                FilePurpose
+  /// Object key. Always begins schools/<schoolId>/ so a tenant's files sit apart.
+  key                    String
+  /// What the uploader called it — shown to people, never used as a path.
+  displayName            String
+  contentType            String
+  sizeBytes              Int
+  /// SHA-256 of the bytes, for de-duplication and integrity checks.
+  checksum               String
+  /// What the file belongs to, once it is in use — "Student", "Payment"…
+  linkedType             String?
+  linkedId               String?     @db.Uuid
+  uploadedByMembershipId String?     @db.Uuid
+  uploadedByUserId       String?     @db.Uuid
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, key])
+  @@index([schoolId, purpose])
+  @@index([schoolId, linkedType, linkedId])
+  @@index([schoolId, checksum])
+  @@map("file_objects")
 }
