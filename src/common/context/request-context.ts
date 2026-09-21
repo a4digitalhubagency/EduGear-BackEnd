@@ -16,6 +16,12 @@ export interface AuthContext {
 
 export interface RequestContextStore {
   requestId: string;
+  /**
+   * Set when a task acts for one school with no user behind it — a provider
+   * webhook, a scheduled job. The tenant guard scopes to it exactly as it
+   * would to a signed-in member of staff.
+   */
+  systemTenantId?: string;
   ip?: string;
   userAgent?: string;
   /** Null until the auth guard has verified a token. Mutated in place. */
@@ -64,6 +70,7 @@ export const RequestContext = {
       ip: seed.ip,
       userAgent: seed.userAgent,
       auth: seed.auth ?? null,
+      systemTenantId: seed.systemTenantId,
       systemScope: seed.systemScope ?? false,
     };
     return storage.run(store, () => startInContext(fn()));
@@ -103,7 +110,17 @@ export const RequestContext = {
 
   /** The active tenant, or null when unauthenticated / in system scope. */
   getTenantId(): string | null {
-    return storage.getStore()?.auth?.schoolId ?? null;
+    const store = storage.getStore();
+    return store?.auth?.schoolId ?? store?.systemTenantId ?? null;
+  },
+
+  /**
+   * Runs `fn` scoped to one school with no user attached — for work a person
+   * did not ask for directly, such as a payment provider's webhook. Everything
+   * downstream is tenant-scoped as usual; audit entries simply have no actor.
+   */
+  runForSchool<T>(schoolId: string, fn: () => T): T {
+    return RequestContext.run({ systemTenantId: schoolId }, fn);
   },
 
   isSystemScope(): boolean {

@@ -63,6 +63,10 @@ export const GLOBAL_MODELS: readonly string[] = [
   'RolePermission',
   'RefreshToken',
   'VerificationToken',
+  // A provider's event identity is global: the same delivery must be rejected
+  // as a replay before we know which school it belongs to, and the lookup that
+  // resolves the school happens after.
+  'WebhookEvent',
 ];
 
 export function isTenantScoped(

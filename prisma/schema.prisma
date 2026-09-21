@@ -691,6 +691,9 @@ model Payment {
   method                 PaymentMethod
   /// Teller number, transfer reference or POS stub.
   reference              String?
+  /// Our reference at the payment provider, unique across every school so a
+  /// webhook — which arrives with no tenant — can find its way home.
+  providerReference      String?       @unique
   evidenceUrl            String?
   paidAt                 DateTime
   status                 PaymentStatus @default(PENDING)
@@ -1110,4 +1113,20 @@ model FileObject {
   @@index([schoolId, linkedType, linkedId])
   @@index([schoolId, checksum])
   @@map("file_objects")
+}
+
+/// Every provider webhook we have already acted on. Providers retry, so the
+/// same event arrives more than once; this is what makes that harmless.
+/// Deliberately not tenant-scoped: it is looked up before the school is known.
+model WebhookEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  provider   String
+  /// Provider's event identity — unique per provider, so a replay collides.
+  externalId String
+  reference  String?
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, externalId])
+  @@index([reference])
+  @@map("webhook_events")
 }

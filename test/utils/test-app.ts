@@ -13,10 +13,24 @@ export interface TestContext {
   http: () => ReturnType<typeof request>;
 }
 
-export async function createTestApp(): Promise<TestContext> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+/**
+ * Stand-ins for providers a test must not let reach the network — the payment
+ * provider, above all. Everything else stays real.
+ */
+export interface TestAppOptions {
+  overrides?: { provide: unknown; useValue: unknown }[];
+}
+
+export async function createTestApp(
+  options: TestAppOptions = {},
+): Promise<TestContext> {
+  let builder = Test.createTestingModule({ imports: [AppModule] });
+  for (const override of options.overrides ?? []) {
+    builder = builder
+      .overrideProvider(override.provide)
+      .useValue(override.useValue);
+  }
+  const moduleRef = await builder.compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>();
   // The same prefix, proxy handling and body limit as production.
@@ -43,6 +57,7 @@ export async function closeTestApp(ctx: TestContext): Promise<void> {
 export async function resetDatabase(db: PrismaClient): Promise<void> {
   await db.$executeRawUnsafe(`
     TRUNCATE TABLE
+      webhook_events,
       audit_logs,
       file_objects,
       notifications,

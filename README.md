@@ -224,6 +224,8 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | POST | `/finance/payments/:id/verify` | `finance.verify` |
 | POST | `/finance/payments/:id/reject` | `finance.verify` |
 | GET | `/finance/payments/:id/receipt` | `finance.read` |
+| POST | `/finance/payments/online` | `finance.create` |
+| POST | `/finance/payments/online/:id/refresh` | `finance.read` |
 | GET | `/finance/students/:studentId/statement` | `finance.read` |
 | GET | `/finance/reports/summary` | `finance.read` |
 | GET | `/finance/reports/debtors` | `finance.read` |
@@ -255,6 +257,8 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | GET | `/portal/children/:studentId/fees` · `/results` · `/results/:termId` · `/attendance` | `portal.access` + own child |
 | GET | `/portal/children/:studentId/payments/:paymentId/receipt` | `portal.access` + own child |
 | POST | `/portal/children/:studentId/payments` | `portal.access` + own child |
+| POST | `/portal/children/:studentId/payments/online` | `portal.access` + own child |
+| POST | `/portal/children/:studentId/payments/:paymentId/refresh` | `portal.access` + own child |
 | GET | `/portal/notifications` | `portal.access` |
 | POST | `/portal/notifications/:id/read`, `/portal/notifications/read-all` | `portal.access` |
 | POST | `/files` | per purpose (`students.update`, `school.update`, `finance.create`) |
@@ -265,6 +269,7 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | POST / DELETE | `/schools/me/logo` | `school.update` |
 | POST | `/portal/children/:studentId/evidence` | `portal.access` + own child |
 | GET | `/audit-logs` | `audit.read` |
+| POST | `/webhooks/paystack` | public — signature, not a token |
 | GET | `/health` | public |
 
 Conventions: DTO validation on every input (`whitelist` + `forbidNonWhitelisted`), pagination via
@@ -400,6 +405,9 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `EMAIL_PROVIDER` | `console` (dev) or `resend` |
 | `RESEND_API_KEY` | Required when `EMAIL_PROVIDER=resend` |
 | `REDIS_URL` | Required in production; optional locally (falls back to in-process) |
+| `R2_*` | Cloudflare R2. Without it, uploads are refused in production |
+| `PAYSTACK_SECRET_KEY` | Optional. Online payment is off until it is set |
+| `PAYSTACK_CALLBACK_URL` | Where Paystack returns the payer after checkout |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a
 missing variable at runtime.
@@ -607,3 +615,44 @@ quietly accepted.
   of the system is unaffected, so a deploy never fails over a feature a school may not use.
 
 Not done: virus scanning, image re-encoding to strip EXIF, and per-school storage quotas.
+
+## Online payments (Paystack)
+
+A card payment is a payment like any other: it is created **PENDING**, and only verification moves a
+balance. The difference is who verifies it. A bank transfer is verified by a bursar looking at a
+statement; a card payment is verified by Paystack telling us the money arrived. Both then run the
+same code — `PaymentsService.verify` — so a card payment gets the same receipt number, the same
+recomputed invoice and the same notification to the parent.
+
+The webhook is the part worth reading carefully. It is public, it has no user behind it, and it
+moves money. Four things stand in its way:
+
+1. **The signature over the raw body.** Paystack signs the bytes it sends; the JSON parser keeps
+   those bytes (`applyHttpSettings`) because re-serialising the parsed object reorders it and the
+   digest no longer matches. The comparison is constant-time. A forged or altered body is a 401 with
+   nothing in the message to learn from.
+2. **The tenant is resolved from the reference**, never from the payload. The event names a payment;
+   that payment names its school; the work then runs inside `RequestContext.runForSchool`. A webhook
+   cannot name a school it does not own.
+3. **The amount and currency must match what was asked for.** A charge for the wrong amount is left
+   PENDING and audited, for a person to decide about — not silently accepted, not discarded.
+4. **Every delivery is recorded** in `webhook_events`, unique on `(provider, externalId)`, so a
+   provider retry does not collect twice. The claim is taken before the work and released if the work
+   fails, so a genuine failure can still be retried. Verification is independently conditional on the
+   payment still being PENDING, so neither guard is load-bearing alone.
+
+Anything the provider cannot fix by retrying comes back as **200 with the outcome named**
+(`verified`, `duplicate`, `ignored`, `unknown-reference`, `mismatch`) rather than an error that would
+be retried for hours. A genuine failure throws, and the delivery is left unacknowledged.
+
+Two smaller things that matter in practice:
+
+- **A pending attempt counts against the invoice ceiling**, so a payer who closes the browser would
+  otherwise block their own next attempt. An attempt older than 30 minutes is swept — but only after
+  Paystack confirms it was never collected. A provider we cannot reach means we leave it alone.
+- **`POST /finance/payments/online/:id/refresh`** is the fallback for a webhook that never arrived.
+  It applies only what the provider confirms, under the same amount and currency checks, so it is not
+  a way around verification.
+
+Online payment is simply **off** until `PAYSTACK_SECRET_KEY` is set — the attempt is refused with a
+409 and nothing else in the system changes.

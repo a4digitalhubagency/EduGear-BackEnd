@@ -25,10 +25,15 @@ import {
 } from '../finance/fee-math';
 import { FinanceDocumentsService } from '../finance/finance-documents.service';
 import { PaymentsService } from '../finance/payments.service';
+import { PaystackService } from '../finance/paystack/paystack.service';
 import { ReportCardDto } from '../results/dto/report-card.dto';
 import { ordinal } from '../results/ranking';
 import { ReportCardsService } from '../results/report-cards.service';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
+import {
+  StartOnlinePaymentDto,
+  StartedPaymentResponseDto,
+} from '../finance/dto/payment.dto';
 import {
   PortalChildDto,
   PortalLatestResultDto,
@@ -52,6 +57,7 @@ export class PortalService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly documents: FinanceDocumentsService,
     private readonly payments: PaymentsService,
+    private readonly paystack: PaystackService,
     private readonly reportCards: ReportCardsService,
     private readonly attendance: AttendanceService,
     private readonly settings: SchoolSettingsService,
@@ -181,6 +187,54 @@ export class PortalService {
       },
       schoolId,
     );
+  }
+
+  /**
+   * Pays a child's invoice by card. The parent never names a school and never
+   * names a payer: the invoice must belong to their own child, and the amount
+   * is checked against it before the provider is asked for anything.
+   */
+  async startOnlinePayment(
+    studentId: string,
+    dto: StartOnlinePaymentDto,
+    schoolId: string,
+  ): Promise<StartedPaymentResponseDto> {
+    await this.assertWard(studentId);
+
+    const invoice = await this.prisma.studentFee.findUnique({
+      where: { id: dto.studentFeeId },
+      select: { studentId: true },
+    });
+    if (!invoice || invoice.studentId !== studentId) {
+      throw AppException.notFound('Invoice');
+    }
+
+    const guardian = await this.guardian();
+    // Paystack needs somewhere to send its own receipt. The guardian record is
+    // preferred over the login because it is what the school keeps in touch on.
+    const email = guardian.email ?? RequestContext.getAuth()?.email;
+    if (!email) {
+      throw AppException.conflict(
+        'Add an email address to your profile before paying online',
+      );
+    }
+
+    return this.paystack.start(dto, email, schoolId);
+  }
+
+  /** Asks the provider what happened, for a payment on the parent's own child. */
+  async refreshOnlinePayment(studentId: string, paymentId: string) {
+    await this.assertWard(studentId);
+
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { studentId: true },
+    });
+    if (!payment || payment.studentId !== studentId) {
+      throw AppException.notFound('Payment');
+    }
+
+    return this.paystack.refresh(paymentId);
   }
 
   /**

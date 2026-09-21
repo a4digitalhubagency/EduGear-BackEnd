@@ -203,6 +203,16 @@ export class EnvironmentVariables {
   @IsOptional()
   R2_PUBLIC_URL?: string;
 
+  /// Paystack secret key. Online payments are off until it is set.
+  @IsString()
+  @IsOptional()
+  PAYSTACK_SECRET_KEY?: string;
+
+  /// Where Paystack sends the payer back once they have finished.
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  PAYSTACK_CALLBACK_URL?: string;
+
   /// Where uploads go when R2 is not configured. Development and tests only.
   @IsString()
   STORAGE_LOCAL_DIR = 'storage';

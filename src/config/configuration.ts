@@ -59,6 +59,10 @@ export interface AppConfig {
     resendApiKey?: string;
     from: string;
   };
+  paystack: {
+    secretKey?: string;
+    callbackUrl?: string;
+  };
   storage: {
     accountId?: string;
     accessKeyId?: string;
@@ -119,6 +123,10 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
       provider: env.EMAIL_PROVIDER,
       resendApiKey: env.RESEND_API_KEY,
       from: env.EMAIL_FROM,
+    },
+    paystack: {
+      secretKey: env.PAYSTACK_SECRET_KEY,
+      callbackUrl: env.PAYSTACK_CALLBACK_URL,
     },
     storage: {
       accountId: env.R2_ACCOUNT_ID,

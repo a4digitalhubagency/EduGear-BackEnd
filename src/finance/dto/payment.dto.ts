@@ -136,3 +136,33 @@ export class PaymentDto {
   invoiceBalance: number;
   @ApiProperty() createdAt: Date;
 }
+
+export class StartOnlinePaymentDto {
+  @ApiProperty({ description: 'The invoice being paid' })
+  @IsUUID()
+  studentFeeId: string;
+
+  @ApiProperty({ example: 20000, description: 'Naira; kobo are derived' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(100)
+  @Max(MAX_FEE_AMOUNT)
+  amount: number;
+}
+
+export class StartedPaymentResponseDto {
+  @ApiProperty({ description: 'The pending payment this will settle' })
+  paymentId: string;
+
+  @ApiProperty({ description: "Paystack's reference for the transaction" })
+  reference: string;
+
+  @ApiProperty({ description: 'Send the payer here to complete the payment' })
+  authorizationUrl: string;
+
+  @ApiProperty() amount: number;
+}
+
+export class OnlinePaymentStatusDto {
+  @ApiProperty({ enum: PaymentStatus }) status: PaymentStatus;
+}

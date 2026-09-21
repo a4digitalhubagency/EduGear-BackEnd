@@ -12,6 +12,10 @@ import { FinanceReportsService } from './finance-reports.service';
 import { PaymentRemindersService } from './payment-reminders.service';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { PaystackClient } from './paystack/paystack.client';
+import { PaystackController } from './paystack/paystack.controller';
+import { PaystackService } from './paystack/paystack.service';
+import { PaystackWebhookController } from './paystack/paystack-webhook.controller';
 import { StudentFeesController } from './student-fees.controller';
 import { StudentFeesService } from './student-fees.service';
 
@@ -24,6 +28,8 @@ import { StudentFeesService } from './student-fees.service';
     PaymentsController,
     FinanceReportsController,
     FinanceDocumentsController,
+    PaystackController,
+    PaystackWebhookController,
   ],
   providers: [
     FeeCategoriesService,
@@ -33,6 +39,8 @@ import { StudentFeesService } from './student-fees.service';
     FinanceReportsService,
     PaymentRemindersService,
     FinanceDocumentsService,
+    PaystackClient,
+    PaystackService,
   ],
   exports: [
     FeeCategoriesService,
@@ -40,6 +48,7 @@ import { StudentFeesService } from './student-fees.service';
     StudentFeesService,
     PaymentsService,
     FinanceDocumentsService,
+    PaystackService,
   ],
 })
 export class FinanceModule {}

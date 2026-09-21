@@ -180,6 +180,30 @@ on top of `@RequirePermissions`:
 - **Parent portal** — every child route calls `assertWard` before anything else; another family's
   child is a 404. The tenant guard cannot enforce this because both families share a school.
 
+### Money that arrives from outside (Paystack)
+
+[src/finance/paystack/](src/finance/paystack/) is the one place a request can move money without a
+logged-in user, so it has its own rules:
+
+- **A webhook authenticates by signature, not by token.** `isValidSignature` runs over the *raw*
+  bytes, which `applyHttpSettings` keeps via the JSON parser's `verify` callback. If you touch body
+  parsing, keep that — re-serialising the parsed object breaks every signature.
+- **The tenant comes from the payment the reference names**, through
+  `RequestContext.runForSchool(schoolId, fn)`. Never from the payload. A payload's own claim about
+  which school it belongs to is attacker-controlled.
+- **Never trust the provider's amount.** Check it against the payment before verifying; a mismatch
+  stays PENDING and is audited rather than accepted or discarded.
+- **Record every delivery** in `WebhookEvent` (unique on `provider` + `externalId`) before doing the
+  work, and release the claim if the work throws — otherwise the retry that would have fixed it is
+  discarded as a duplicate. `WebhookEvent` is deliberately in `GLOBAL_MODELS`: the replay has to be
+  rejected before the school is known.
+- **Answer 200 for anything a retry cannot fix**, with the outcome named. Throw only for what should
+  be retried.
+- Settling reuses `PaymentsService.verify`, so a card payment and a bank transfer get the same
+  receipt numbering, invoice recomputation and notification. Do not write a second verification path.
+- A pending online attempt counts against the invoice ceiling, so `sweepAbandoned` clears stale ones —
+  but only after the provider confirms they were never collected.
+
 ### Side effects
 
 Audit entries and in-app notifications are written after the business change commits and never throw.

@@ -28,7 +28,12 @@ import { CurrentSchool, RequirePermissions } from '../common/decorators';
 import { FileDto } from '../files/dto/file.dto';
 import { MAX_UPLOAD_BYTES } from '../files/file-policy';
 import { ReceiptDto, StatementDto } from '../finance/dto/document.dto';
-import { PaymentDto } from '../finance/dto/payment.dto';
+import {
+  OnlinePaymentStatusDto,
+  PaymentDto,
+  StartOnlinePaymentDto,
+  StartedPaymentResponseDto,
+} from '../finance/dto/payment.dto';
 import {
   NotificationDto,
   QueryNotificationsDto,
@@ -128,6 +133,49 @@ export class PortalController {
       metadata: { method: payment.method, reference: payment.reference },
     });
     return payment;
+  }
+
+  @Post('children/:studentId/payments/online')
+  @ApiOperation({
+    summary: 'Pay by card and get the checkout link',
+    description:
+      'Creates a PENDING payment. Only the provider can settle it, so the ' +
+      'balance does not move until the money actually arrives.',
+  })
+  @ApiCreatedResponse({ type: StartedPaymentResponseDto })
+  async startOnlinePayment(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Body() dto: StartOnlinePaymentDto,
+    @CurrentSchool() schoolId: string,
+  ): Promise<StartedPaymentResponseDto> {
+    const started = await this.portal.startOnlinePayment(
+      studentId,
+      dto,
+      schoolId,
+    );
+    await this.audit.record({
+      action: AUDIT_ACTIONS.PAYMENT_ONLINE_STARTED,
+      entityType: 'Payment',
+      entityId: started.paymentId,
+      description: `A parent started an online payment of ₦${started.amount}`,
+      metadata: { reference: started.reference },
+    });
+    return started;
+  }
+
+  @Post('children/:studentId/payments/:paymentId/refresh')
+  @ApiOperation({
+    summary: 'Check an online payment that has not settled yet',
+    description:
+      'For the payer who has paid but whose confirmation has not landed.',
+  })
+  @ApiOkResponse({ type: OnlinePaymentStatusDto })
+  @HttpCode(HttpStatus.OK)
+  refreshOnlinePayment(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+  ): Promise<OnlinePaymentStatusDto> {
+    return this.portal.refreshOnlinePayment(studentId, paymentId);
   }
 
   @Post('children/:studentId/evidence')

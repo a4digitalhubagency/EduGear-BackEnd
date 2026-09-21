@@ -1,6 +1,8 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ErrorCode } from './error-codes';
 
+const CONFLICT_STATUS: number = HttpStatus.CONFLICT;
+
 export interface ValidationDetail {
   field: string;
   constraints: string[];
@@ -60,6 +62,13 @@ export class AppException extends HttpException {
       HttpStatus.CONFLICT,
       ErrorCode.DUPLICATE_RESOURCE,
       message,
+    );
+  }
+
+  /** True for a 409 we raised: a clash with the current state, not a failure. */
+  static isConflict(error: unknown): boolean {
+    return (
+      error instanceof AppException && error.getStatus() === CONFLICT_STATUS
     );
   }
 
