@@ -57,6 +57,7 @@ export async function closeTestApp(ctx: TestContext): Promise<void> {
 export async function resetDatabase(db: PrismaClient): Promise<void> {
   await db.$executeRawUnsafe(`
     TRUNCATE TABLE
+      platform_admins,
       webhook_events,
       audit_logs,
       file_objects,

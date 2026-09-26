@@ -19,6 +19,29 @@ export interface AccessTokenPayload {
   aud?: string;
 }
 
+/**
+ * A platform operator's access token. A separate `typ` and a separate id field,
+ * not a reused `mid`: the two scopes must never be confusable, because a bug
+ * that read one as the other would hand a school user the platform.
+ */
+export interface PlatformTokenPayload {
+  /** User id */
+  sub: string;
+  /** PlatformAdmin id — authority comes from this row, not from a membership. */
+  pid: string;
+  /** User.tokenVersion at issue time. */
+  ver: number;
+  typ: 'platform';
+  jti: string;
+  iat?: number;
+  exp?: number;
+  iss?: string;
+  aud?: string;
+}
+
+/** What the JWT strategy receives before it knows which kind of token it is. */
+export type TokenPayload = AccessTokenPayload | PlatformTokenPayload;
+
 export interface IssuedTokens {
   accessToken: string;
   refreshToken: string;

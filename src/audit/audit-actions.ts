@@ -84,6 +84,16 @@ export const AUDIT_ACTIONS = {
   PAYMENT_ONLINE_STARTED: 'payment.online_started',
   PAYMENT_ONLINE_SETTLED: 'payment.online_settled',
   PAYMENT_ONLINE_MISMATCH: 'payment.online_mismatch',
+
+  // A4's own staff acting on a tenant. Written against the affected school, so
+  // its trail shows what was done to it and by whom.
+  PLATFORM_LOGIN_SUCCEEDED: 'platform.login_succeeded',
+  PLATFORM_LOGIN_FAILED: 'platform.login_failed',
+  PLATFORM_ACCESS_GRANTED: 'platform.access_granted',
+  PLATFORM_ACCESS_REVOKED: 'platform.access_revoked',
+  PLATFORM_SCHOOL_SUSPENDED: 'platform.school_suspended',
+  PLATFORM_SCHOOL_REACTIVATED: 'platform.school_reactivated',
+  PLATFORM_SCHOOL_CANCELLED: 'platform.school_cancelled',
   RESULT_CREATED: 'result.created',
   RESULT_SUBMITTED: 'result.submitted',
   RESULT_APPROVED: 'result.approved',

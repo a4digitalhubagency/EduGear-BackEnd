@@ -14,6 +14,18 @@ export interface AuthContext {
   email: string;
 }
 
+/**
+ * A platform operator, resolved from a verified platform token. There is no
+ * school here and there never is: platform routes read across tenants through
+ * `runAsSystem`, and every one of them is explicit about it.
+ */
+export interface PlatformContext {
+  userId: string;
+  platformAdminId: string;
+  role: string;
+  email: string;
+}
+
 export interface RequestContextStore {
   requestId: string;
   /**
@@ -26,6 +38,11 @@ export interface RequestContextStore {
   userAgent?: string;
   /** Null until the auth guard has verified a token. Mutated in place. */
   auth: AuthContext | null;
+  /**
+   * Set instead of `auth` when the caller is A4's own staff rather than a
+   * school's. Never both: a token is one kind or the other.
+   */
+  platform: PlatformContext | null;
   /**
    * When true the tenant guard stops injecting `schoolId`. Only ever set by
    * `runAsSystem`, which exists for login (user lookup by email), tenant
@@ -70,6 +87,7 @@ export const RequestContext = {
       ip: seed.ip,
       userAgent: seed.userAgent,
       auth: seed.auth ?? null,
+      platform: seed.platform ?? null,
       systemTenantId: seed.systemTenantId,
       systemScope: seed.systemScope ?? false,
     };
@@ -133,5 +151,20 @@ export const RequestContext = {
     if (store) {
       store.auth = auth;
     }
+  },
+
+  /**
+   * The platform counterpart of `setAuth`. Deliberately does not touch `auth`,
+   * so no platform request ever carries a tenant the guard could pick up.
+   */
+  setPlatform(platform: PlatformContext): void {
+    const store = storage.getStore();
+    if (store) {
+      store.platform = platform;
+    }
+  },
+
+  getPlatform(): PlatformContext | null {
+    return storage.getStore()?.platform ?? null;
   },
 };

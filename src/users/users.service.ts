@@ -14,6 +14,7 @@ import { paginate, PaginatedDto } from '../common/dto/pagination.dto';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService } from '../auth/access-control.service';
+import { PlatformAdminService } from '../platform/platform-admin.service';
 import { RolesService } from '../tenants/roles.service';
 import { PasswordService } from '../auth/password.service';
 import { TokenService } from '../auth/token.service';
@@ -45,6 +46,7 @@ export class UsersService {
     private readonly audit: AuditService,
     private readonly config: ConfigService<AppConfig, true>,
     private readonly roles: RolesService,
+    private readonly platformAdmins: PlatformAdminService,
   ) {}
 
   /** Staff of the current school. Tenant filtering comes from the Prisma guard. */
@@ -155,6 +157,9 @@ export class UsersService {
       );
     // An invitation is a grant like any other: it cannot exceed the inviter.
     await this.roles.assertMayAssign(dto.roleId, auth);
+    // The other half of the platform/school separation: A4's own operators must
+    // not be reachable through a school, or the two blast radii merge again.
+    await this.platformAdmins.assertNotPlatformEmail(dto.email);
 
     const existingUser = await RequestContext.runAsSystem(() =>
       this.prisma.user.findUnique({ where: { email: dto.email } }),

@@ -7,6 +7,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AppConfig } from '../../config/configuration';
 import {
   AuthContext,
+  PlatformContext,
   RequestContext,
 } from '../../common/context/request-context';
 import { AppException } from '../../common/errors/app.exception';
@@ -15,7 +16,8 @@ import {
   AccessControlService,
   MembershipSnapshot,
 } from '../access-control.service';
-import { AccessTokenPayload } from '../token.types';
+import { PlatformAdminService } from '../../platform/platform-admin.service';
+import { PlatformTokenPayload, TokenPayload } from '../token.types';
 
 /**
  * Verifies the access token, then re-checks everything that could have changed
@@ -28,6 +30,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
     config: ConfigService<AppConfig, true>,
     private readonly accessControl: AccessControlService,
+    private readonly platformAdmins: PlatformAdminService,
   ) {
     const jwt = config.get('jwt', { infer: true });
     super({
@@ -41,9 +44,19 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(
-    req: Request & { auth?: AuthContext; membership?: MembershipSnapshot },
-    payload: AccessTokenPayload,
-  ): Promise<AuthContext> {
+    req: Request & {
+      auth?: AuthContext;
+      membership?: MembershipSnapshot;
+      platform?: PlatformContext;
+    },
+    payload: TokenPayload,
+  ): Promise<AuthContext | PlatformContext> {
+    // The two scopes are resolved by entirely separate paths and never share a
+    // lookup, so no bug can quietly promote a school token to a platform one.
+    if (payload.typ === 'platform') {
+      return this.validatePlatform(req, payload);
+    }
+
     if (payload.typ !== 'access') {
       throw AppException.unauthorized(
         'Invalid token type',
@@ -104,5 +117,57 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     req.membership = snapshot;
 
     return auth;
+  }
+
+  /**
+   * A4's own staff. No membership is loaded and no tenant is set, so the Prisma
+   * guard still has nothing to scope by — a platform route reads across schools
+   * only where it says `runAsSystem` out loud.
+   */
+  private async validatePlatform(
+    req: Request & { platform?: PlatformContext },
+    payload: PlatformTokenPayload,
+  ): Promise<PlatformContext> {
+    const admin = await this.platformAdmins.snapshot(payload.pid);
+
+    if (!admin || admin.userId !== payload.sub) {
+      throw AppException.unauthorized(
+        'Session is no longer valid',
+        ErrorCode.TOKEN_INVALID,
+      );
+    }
+
+    if (admin.tokenVersion !== payload.ver) {
+      throw AppException.unauthorized(
+        'Session has been invalidated, please sign in again',
+        ErrorCode.TOKEN_INVALID,
+      );
+    }
+
+    if (admin.disabledAt) {
+      throw AppException.forbidden(
+        'Platform access has been revoked',
+        ErrorCode.ACCOUNT_INACTIVE,
+      );
+    }
+
+    if (admin.userStatus !== UserStatus.ACTIVE) {
+      throw AppException.forbidden(
+        'This account is not active',
+        ErrorCode.ACCOUNT_INACTIVE,
+      );
+    }
+
+    const platform: PlatformContext = {
+      userId: admin.userId,
+      platformAdminId: admin.id,
+      role: admin.role,
+      email: admin.email,
+    };
+
+    RequestContext.setPlatform(platform);
+    req.platform = platform;
+
+    return platform;
   }
 }

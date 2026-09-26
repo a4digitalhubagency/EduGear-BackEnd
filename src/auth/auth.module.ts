@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { PlatformAdminModule } from '../platform/platform-admin.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { AccessControlService } from './access-control.service';
 import { MembershipCacheService } from './membership-cache.service';
@@ -19,6 +20,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({}),
     TenantsModule,
+    // The strategy resolves platform tokens through it.
+    PlatformAdminModule,
   ],
   controllers: [AuthController],
   providers: [

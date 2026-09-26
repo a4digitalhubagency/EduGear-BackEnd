@@ -129,9 +129,14 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 ## Status
 
-Phases 0–4 are complete. **Phase 5 (Administration) is in progress**: role management and school
-settings are done; the rest of its brief (user management, academic configuration, audit views) was
+Phases 0–5 are complete. Phase 5 covered role management, school settings, file uploads, online
+payments and the platform console; user management, academic configuration and audit views were
 delivered by earlier phases.
+
+Known gaps, deliberately left: a teacher who is also a parent at the same school cannot hold both
+logins (one membership per user per school); one teacher per subject per arm, so co-teaching a
+subject is unsupported; no virus scanning, EXIF stripping or storage quotas on uploads; no deploy
+target config or error monitoring.
 
 Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/),
 [src/finance/](src/finance/) and [src/results/](src/results/): pure domain rules in their own file with a `*.spec.ts`, a service
@@ -203,6 +208,41 @@ logged-in user, so it has its own rules:
   receipt numbering, invoice recomputation and notification. Do not write a second verification path.
 - A pending online attempt counts against the invoice ceiling, so `sweepAbandoned` clears stale ones —
   but only after the provider confirms they were never collected.
+
+### The platform console (A4's own surface)
+
+[src/platform/](src/platform/) is the only code that reads across tenants. It runs
+with no tenant at all, so the Prisma guard protects nothing here — which is why
+every rule is explicit:
+
+- **Two token scopes, never interchangeable.** A school token has `typ: 'access'`
+  and a membership id; a platform token has `typ: 'platform'` and a
+  `PlatformAdmin` id. [jwt.strategy.ts](src/auth/strategies/jwt.strategy.ts)
+  branches on `typ` and the two paths share no lookup.
+  [permissions.guard.ts](src/common/guards/permissions.guard.ts) then refuses each
+  on the other's routes — a school token gets **404** on a platform route (its
+  existence is not something a school may confirm), a platform token gets **403**
+  on a school route. Both directions are tested; keep them that way.
+- **Mark platform routes with `@RequirePlatformRole(...)`** and `@AllowNoTenant()`.
+  A platform route with no role metadata is not a public route — it is a bug, and
+  the guard treats a missing `req.platform` as 404.
+- **The two populations must not overlap.** `PlatformAdminService.grant` refuses a
+  user with any membership, and `assertNotPlatformEmail` guards
+  `UsersService.createInvitation`, the single choke point both staff and parent
+  invitations pass through. That separation is the whole security argument for
+  this surface.
+- **Metadata only.** No student names, no money, no results reach
+  `PlatformSchoolDto`. There is no impersonation, deliberately. If a new field is
+  tempting, it probably belongs in something the school exports for itself.
+- **A status change must drop the school's cached snapshots.** Enforcement lives
+  in the JWT strategy, but a suspended school's staff keep working until the ACL
+  cache expires. `dropCachedSessions` invalidates each membership — there is no
+  school-wide cache key, and adding one to the hot path is not worth it for
+  something this rare.
+- The platform admin snapshot is **deliberately not cached**: revocation has to
+  bite on the next request, and there are only a handful of rows.
+- The first owner comes from `npm run platform:grant`, never from an env var read
+  at boot — that would be a backdoor re-applied on every deploy.
 
 ### Side effects
 

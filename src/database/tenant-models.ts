@@ -67,6 +67,8 @@ export const GLOBAL_MODELS: readonly string[] = [
   // as a replay before we know which school it belongs to, and the lookup that
   // resolves the school happens after.
   'WebhookEvent',
+  // A4's own staff belong to no school, which is the entire point of them.
+  'PlatformAdmin',
 ];
 
 export function isTenantScoped(

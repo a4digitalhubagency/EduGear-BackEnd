@@ -27,6 +27,17 @@ enum SchoolStatus {
   CANCELLED
 }
 
+/// What a platform operator may do. Deliberately coarse: the difference that
+/// matters is whether someone can only look, or can also take a school offline.
+enum PlatformRole {
+  /// Read-only. Lists schools and their usage; changes nothing.
+  SUPPORT
+  /// May suspend, reactivate and cancel schools, and create them.
+  OPERATOR
+  /// May also grant and revoke platform access itself.
+  OWNER
+}
+
 enum UserStatus {
   PENDING_VERIFICATION
   ACTIVE
@@ -170,6 +181,7 @@ model User {
   auditLogs          AuditLog[]
   guardianProfiles   Guardian[]
   notifications      Notification[]
+  platformAdmin      PlatformAdmin?
 
   @@index([status])
   @@map("users")
@@ -1118,6 +1130,30 @@ model FileObject {
 /// Every provider webhook we have already acted on. Providers retry, so the
 /// same event arrives more than once; this is what makes that harmless.
 /// Deliberately not tenant-scoped: it is looked up before the school is known.
+/// A4 Technologies' own staff, not a school's.
+///
+/// Identity is reused from `User` — password hashing, lockout, verification and
+/// refresh tokens all already work — but authority is this separate axis, so a
+/// compromised school account can never reach platform routes. A platform admin
+/// holds no membership anywhere, which is enforced when access is granted: the
+/// whole point is that the two blast radii do not overlap.
+model PlatformAdmin {
+  id     String       @id @default(uuid()) @db.Uuid
+  userId String       @unique @db.Uuid
+  role   PlatformRole @default(SUPPORT)
+  /// Revoking access without deleting the trail of what they did.
+  disabledAt DateTime?
+  /// The platform admin who granted this one; null for the bootstrapped first.
+  grantedById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([role])
+  @@map("platform_admins")
+}
+
 model WebhookEvent {
   id         String   @id @default(uuid()) @db.Uuid
   provider   String

@@ -5,13 +5,19 @@ import {
   MembershipSnapshot,
 } from '../../auth/access-control.service';
 import { PermissionKey } from '../constants/permissions';
-import { AuthContext, RequestContext } from '../context/request-context';
+import { PlatformRole } from '@prisma/client';
+import {
+  AuthContext,
+  PlatformContext,
+  RequestContext,
+} from '../context/request-context';
 import { AppException } from '../errors/app.exception';
 import { ErrorCode } from '../errors/error-codes';
 import {
   ALLOW_NO_TENANT_KEY,
   IS_PUBLIC_KEY,
   PERMISSIONS_KEY,
+  PLATFORM_ROLE_KEY,
 } from '../decorators';
 
 /**
@@ -33,9 +39,29 @@ export class PermissionsGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const request = context
-      .switchToHttp()
-      .getRequest<{ auth?: AuthContext; membership?: MembershipSnapshot }>();
+    const request = context.switchToHttp().getRequest<{
+      auth?: AuthContext;
+      membership?: MembershipSnapshot;
+      platform?: PlatformContext;
+    }>();
+
+    const platformRoles = this.reflector.getAllAndOverride<PlatformRole[]>(
+      PLATFORM_ROLE_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    // The two scopes are mutually exclusive, checked in both directions: a
+    // platform route refuses a school token, and every ordinary route refuses a
+    // platform one. Neither can be reached by holding the other.
+    if (platformRoles) {
+      return this.allowPlatform(request.platform, platformRoles);
+    }
+    if (request.platform) {
+      throw AppException.forbidden(
+        'A platform session cannot be used on a school route',
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
+      );
+    }
 
     if (!request.auth) {
       throw AppException.unauthorized();
@@ -75,6 +101,30 @@ export class PermissionsGuard implements CanActivate {
         403,
         ErrorCode.INSUFFICIENT_PERMISSIONS,
         `Missing required permission${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`,
+      );
+    }
+
+    return true;
+  }
+
+  /**
+   * Platform routes have no tenant by design, so the tenant check above does not
+   * apply to them. Authority is the PlatformAdmin row's role and nothing else.
+   */
+  private allowPlatform(
+    platform: PlatformContext | undefined,
+    allowed: PlatformRole[],
+  ): boolean {
+    if (!platform) {
+      // Deliberately not "you need a platform login": the existence of this
+      // surface is not something a school's token should be able to confirm.
+      throw AppException.notFound('Resource');
+    }
+
+    if (!allowed.includes(platform.role as PlatformRole)) {
+      throw AppException.forbidden(
+        `This action needs platform role: ${allowed.join(' or ')}`,
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
       );
     }
 

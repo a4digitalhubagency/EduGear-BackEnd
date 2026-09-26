@@ -269,6 +269,11 @@ Base path `/api`. Interactive docs at `/api/docs`, OpenAPI JSON at `/api/docs-js
 | POST / DELETE | `/schools/me/logo` | `school.update` |
 | POST | `/portal/children/:studentId/evidence` | `portal.access` + own child |
 | GET | `/audit-logs` | `audit.read` |
+| POST | `/platform/auth/login` | public — A4 operators only |
+| GET | `/platform/me`, `/platform/stats`, `/platform/schools`, `/platform/schools/:id` | platform `SUPPORT`+ |
+| POST | `/platform/schools/:id/suspend` · `/reactivate` · `/cancel` | platform `OPERATOR`+ |
+| GET / POST | `/platform/admins` | platform `OWNER` |
+| DELETE | `/platform/admins/:id` | platform `OWNER` |
 | POST | `/webhooks/paystack` | public — signature, not a token |
 | GET | `/health` | public |
 
@@ -615,6 +620,65 @@ quietly accepted.
   of the system is unaffected, so a deploy never fails over a feature a school may not use.
 
 Not done: virus scanning, image re-encoding to strip EXIF, and per-school storage quotas.
+
+## The platform console
+
+A4's own surface, for looking after tenants rather than working inside one. It is
+the only place in the application that reads across schools, so it is deliberately
+the smallest thing that does the job.
+
+**Operators are separate accounts.** Identity is reused from `User` — password
+hashing, lockout and verification already work — but authority is a separate
+`PlatformAdmin` row, and the token carries `typ: 'platform'` with a
+`PlatformAdmin` id instead of a membership id. The two are never interchangeable:
+
+- Platform access cannot be granted to a user who belongs to a school, and a
+  school cannot invite an email that holds platform access. If those overlapped,
+  one phished proprietor would be every school's problem.
+- A school token on a platform route is a **404**, not a 403 — a school's token
+  should not be able to confirm that this surface exists.
+- A platform token on any school route is a **403**. Checked in both directions,
+  and both directions are tested.
+
+**Three roles**, because the difference that matters is whether you can only look:
+
+| | |
+| --- | --- |
+| `SUPPORT` | Read schools, usage and platform totals. Changes nothing. |
+| `OPERATOR` | Also suspend, reactivate and cancel schools. |
+| `OWNER` | Also grant and revoke platform access. |
+
+**Metadata only.** The console shows who a school is, what state it is in and how
+much it uses — student and staff counts, class arms, bytes stored, the
+proprietor's email. No student names, no fees, no results. There is no
+impersonation and no "view as this school": an operator who needs that detail asks
+the school. The line is drawn in `PlatformSchoolDto`, and a test asserts the
+response carries none of it.
+
+**Suspension already worked**; this only added the surface to trigger it. The JWT
+strategy has always refused a token whose school is not `ACTIVE`. What the console
+adds is dropping the school's cached membership snapshots at the same moment —
+without that, staff already signed in would keep working for up to the cache TTL.
+
+**Cancellation is a soft delete** and nothing more: the school is marked
+`CANCELLED` with a `deletedAt`, its logins stop, and not one record is destroyed.
+Reactivating is the undo and restores it intact.
+
+**The first owner is created by a script**, not by an env var:
+
+```bash
+npm run platform:grant -- ops@a4technologies.ng OWNER --create
+```
+
+A variable read at boot would be a standing backdoor re-applied on every deploy.
+This runs when a person decides to run it, refuses an account that belongs to a
+school, and prints exactly what it changed.
+
+An owner can remove another owner but never themselves, which is what makes
+lockout impossible — the last owner standing is by definition the one making the
+request. (An earlier "last owner" check was removed after mutation testing showed
+it could never fire; the comment in `revoke` records why, so anyone adding a
+demotion path knows the invariant has to be re-established.)
 
 ## Online payments (Paystack)
 

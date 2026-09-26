@@ -29,6 +29,7 @@ import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
 import { FinanceModule } from './finance/finance.module';
 import { GuardiansModule } from './guardians/guardians.module';
+import { PlatformModule } from './platform/platform.module';
 import { PortalModule } from './portal/portal.module';
 import { ResultsModule } from './results/results.module';
 import { StudentsModule } from './students/students.module';
@@ -121,6 +122,7 @@ import { UsersModule } from './users/users.module';
     ResultsModule,
     AttendanceModule,
     PortalModule,
+    PlatformModule,
     HealthModule,
   ],
   providers: [

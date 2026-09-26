@@ -13,7 +13,11 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
-import { AccessTokenPayload, IssuedTokens } from './token.types';
+import {
+  AccessTokenPayload,
+  IssuedTokens,
+  PlatformTokenPayload,
+} from './token.types';
 
 export interface SessionMeta {
   ip?: string;
@@ -94,6 +98,60 @@ export class TokenService {
           membershipId: params.membershipId,
           tokenHash: TokenService.sha256(refreshToken),
           familyId: params.familyId ?? randomUUID(),
+          expiresAt: new Date(Date.now() + refreshTtlMs),
+          createdByIp: params.meta?.ip,
+          userAgent: params.meta?.userAgent?.slice(0, 255),
+        },
+      }),
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: Math.floor(accessTtlMs / 1000),
+    };
+  }
+
+  /**
+   * A platform operator's session. The refresh row carries no membership, which
+   * is what makes it unusable for school access even if it were replayed: a
+   * rotation with no membership cannot produce a school token.
+   */
+  async issuePlatformTokens(params: {
+    userId: string;
+    platformAdminId: string;
+    tokenVersion: number;
+    meta?: SessionMeta;
+  }): Promise<IssuedTokens> {
+    const jwtConfig = this.config.get('jwt', { infer: true });
+    const accessTtlMs = this.ttlToMs(jwtConfig.accessTtl);
+    const refreshTtlMs = this.ttlToMs(jwtConfig.refreshTtl);
+
+    const payload: PlatformTokenPayload = {
+      sub: params.userId,
+      pid: params.platformAdminId,
+      ver: params.tokenVersion,
+      typ: 'platform',
+      jti: randomUUID(),
+    };
+
+    const accessToken = await this.jwt.signAsync(payload, {
+      secret: jwtConfig.accessSecret,
+      expiresIn: Math.floor(accessTtlMs / 1000),
+      issuer: jwtConfig.issuer,
+      audience: jwtConfig.audience,
+    });
+
+    const refreshToken = TokenService.randomToken();
+
+    await RequestContext.runAsSystem(() =>
+      this.prisma.refreshToken.create({
+        data: {
+          userId: params.userId,
+          membershipId: null,
+          tokenHash: TokenService.sha256(refreshToken),
+          familyId: randomUUID(),
           expiresAt: new Date(Date.now() + refreshTtlMs),
           createdByIp: params.meta?.ip,
           userAgent: params.meta?.userAgent?.slice(0, 255),

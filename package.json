@@ -1,7 +1,7 @@
 {
   "name": "edugear-backend",
   "version": "0.1.0",
-  "description": "EduGear — multi-tenant school management SaaS backend (A4 Technologies)",
+  "description": "EduGear \u2014 multi-tenant school management SaaS backend (A4 Technologies)",
   "author": "A4 Technologies",
   "private": true,
   "license": "UNLICENSED",
@@ -25,7 +25,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "platform:grant": "ts-node scripts/grant-platform-access.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
