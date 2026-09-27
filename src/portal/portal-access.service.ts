@@ -34,15 +34,25 @@ export class PortalAccessService {
     const membership = guardian.userId
       ? await this.prisma.membership.findFirst({
           where: { userId: guardian.userId },
+          include: { role: { select: { slug: true, isSystem: true } } },
         })
       : null;
+
+    // A teacher who is also a parent here holds a staff membership, not a Parent
+    // one. Reporting its status as their portal status would read as nonsense —
+    // "INVITED" for someone who has worked here for years — so say plainly that
+    // they use their staff login instead.
+    const usesStaffLogin = Boolean(
+      membership && membership.role.slug !== SYSTEM_ROLES.PARENT,
+    );
 
     return {
       guardianId,
       email: guardian.email ?? '',
       status: membership?.status ?? 'NONE',
-      invitedAt: membership?.invitedAt ?? null,
-      acceptedAt: membership?.acceptedAt ?? null,
+      invitedAt: usesStaffLogin ? null : (membership?.invitedAt ?? null),
+      acceptedAt: usesStaffLogin ? null : (membership?.acceptedAt ?? null),
+      ...(usesStaffLogin ? { usesStaffLogin: true } : {}),
     };
   }
 
@@ -92,6 +102,18 @@ export class PortalAccessService {
           `That email already signs in as ${other.firstName} ${other.lastName}, another parent at this school`,
         );
       }
+
+      // A member of staff at this school who is also a parent here. They already
+      // have a login, and a second membership is not possible — so link their
+      // existing one to this guardian record and the portal opens for their own
+      // children. No invitation, because there is nothing to accept.
+      const staff = await this.prisma.membership.findFirst({
+        where: { userId: existing.id, status: MembershipStatus.ACTIVE },
+        select: { id: true, invitedAt: true, acceptedAt: true },
+      });
+      if (staff) {
+        return this.linkStaffLogin(guardianId, existing.id, guardian, staff);
+      }
     }
 
     const { user, membership, token } = await this.users.createInvitation(
@@ -127,6 +149,38 @@ export class PortalAccessService {
       status: membership.status,
       invitedAt: membership.invitedAt,
       acceptedAt: membership.acceptedAt,
+    };
+  }
+
+  /**
+   * Points a guardian record at a login that already exists because the person
+   * works here. Their role does not change and they gain no staff permission
+   * they did not have — PortalGuard reads the guardian link, not the role.
+   */
+  private async linkStaffLogin(
+    guardianId: string,
+    userId: string,
+    guardian: { email: string | null; firstName: string; lastName: string },
+    membership: { id: string; invitedAt: Date | null; acceptedAt: Date | null },
+  ): Promise<PortalAccessDto> {
+    await this.prisma.guardian.update({
+      where: { id: guardianId },
+      data: { userId },
+    });
+
+    // PortalGuard reads the guardian row, not the cached snapshot, so nothing
+    // needs invalidating — but the snapshot is dropped anyway, because relying
+    // on that detail staying true is how stale-permission bugs start.
+    await this.accessControl.invalidateMembership(membership.id);
+
+    return {
+      guardianId,
+      email: guardian.email ?? '',
+      status: MembershipStatus.ACTIVE,
+      invitedAt: membership.invitedAt,
+      acceptedAt: membership.acceptedAt,
+      /** They sign in with their staff login; there is nothing to send. */
+      usesStaffLogin: true,
     };
   }
 

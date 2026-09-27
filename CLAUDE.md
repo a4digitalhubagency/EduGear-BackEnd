@@ -133,10 +133,9 @@ Phases 0–5 are complete. Phase 5 covered role management, school settings, fil
 payments and the platform console; user management, academic configuration and audit views were
 delivered by earlier phases.
 
-Known gaps, deliberately left: a teacher who is also a parent at the same school cannot hold both
-logins (one membership per user per school); one teacher per subject per arm, so co-teaching a
-subject is unsupported; no virus scanning, EXIF stripping or storage quotas on uploads; no deploy
-target config or error monitoring.
+Known gaps, deliberately left: one teacher per subject per arm, so co-teaching a subject is
+unsupported (confirmed as correct for the pilot schools); no virus scanning or EXIF stripping on
+uploads.
 
 Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/),
 [src/finance/](src/finance/) and [src/results/](src/results/): pure domain rules in their own file with a `*.spec.ts`, a service
@@ -184,6 +183,15 @@ on top of `@RequirePermissions`:
   arm's form teacher, or a head. See [results-access.service.ts](src/results/results-access.service.ts).
 - **Parent portal** — every child route calls `assertWard` before anything else; another family's
   child is a 404. The tenant guard cannot enforce this because both families share a school.
+- **Who may open the portal at all** is [portal.guard.ts](src/portal/portal.guard.ts): holding
+  `portal.access`, *or* being a guardian at this school. The second is how a teacher who is also a
+  parent here gets in on their existing login — a membership carries one role, so the alternative was
+  two memberships per user per school and an ambiguous "their membership at this school" everywhere.
+  Inviting such a guardian links the staff login instead of sending an invitation. The consequence,
+  taken deliberately: their token carries staff permissions while they browse the portal, and
+  `assertWard` is what keeps them to their own children. The notification routes are the only ones
+  where this guard is the *sole* gate — every other portal route also resolves a guardian in the
+  service — so keep them covered.
 
 ### Money that arrives from outside (Paystack)
 

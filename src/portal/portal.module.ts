@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { GuardianPortalController } from './guardian-portal.controller';
 import { PortalAccessService } from './portal-access.service';
 import { PortalController } from './portal.controller';
+import { PortalGuard } from './portal.guard';
 import { PortalService } from './portal.service';
 
 /**
@@ -22,6 +23,6 @@ import { PortalService } from './portal.service';
     TenantsModule,
   ],
   controllers: [PortalController, GuardianPortalController],
-  providers: [PortalService, PortalAccessService],
+  providers: [PortalService, PortalAccessService, PortalGuard],
 })
 export class PortalModule {}

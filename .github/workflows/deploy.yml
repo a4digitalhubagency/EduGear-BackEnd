@@ -1,0 +1,61 @@
+name: Deploy
+
+# Only after CI has gone green on main. Railway's own GitHub trigger would
+# deploy on push regardless of whether the tests passed, which is how a broken
+# migration reaches production.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # For a rollback or a re-deploy of the current commit.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Railway
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run does not check out the commit that triggered it.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy
+        # Railway runs preDeployCommand (prisma migrate deploy) from railway.json
+        # before the new container takes traffic, so migrations are a release
+        # step and never race between instances.
+        run: railway up --service "$RAILWAY_SERVICE" --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'edugear-backend' }}
+
+      - name: Confirm the deployment is serving
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS "${{ vars.APP_URL }}/api/health" > /dev/null; then
+              echo "Healthy after ${attempt} attempt(s)."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::${{ vars.APP_URL }}/api/health did not come up."
+          exit 1

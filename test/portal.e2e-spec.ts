@@ -1,3 +1,5 @@
+import { MembershipStatus, UserStatus } from '@prisma/client';
+import * as argon2 from 'argon2';
 import { EmailService } from '../src/notifications/email.service';
 import {
   closeTestApp,
@@ -849,6 +851,236 @@ describe('Parent portal', () => {
         .set(bearer(ngoziToken))
         .expect(200);
       expect(ngoziInbox.body.unread).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // A teacher who is also a parent at this school
+  // -------------------------------------------------------------------------
+
+  describe('a teacher who is also a parent here', () => {
+    const TEACHER_EMAIL = 'kemi@family.test';
+    const TEACHER_PASSWORD = 'TeacherPass123';
+
+    /** Creates a teacher, then a guardian record with the same email. */
+    async function teacherWhoIsAlsoParentOf(
+      studentId: string,
+    ): Promise<{ token: string; guardianId: string }> {
+      const role = await ctx.db.role.findFirstOrThrow({
+        where: { schoolId: school.schoolId, slug: 'TEACHER' },
+      });
+      const user = await ctx.db.user.create({
+        data: {
+          email: TEACHER_EMAIL,
+          firstName: 'Kemi',
+          lastName: 'Balogun',
+          passwordHash: await argon2.hash(TEACHER_PASSWORD, {
+            type: argon2.argon2id,
+          }),
+          status: UserStatus.ACTIVE,
+          emailVerifiedAt: new Date(),
+        },
+      });
+      await ctx.db.membership.create({
+        data: {
+          userId: user.id,
+          schoolId: school.schoolId,
+          roleId: role.id,
+          status: MembershipStatus.ACTIVE,
+          acceptedAt: new Date(),
+        },
+      });
+
+      const guardianId = await guardian('Kemi', TEACHER_EMAIL, '08077776666');
+      await ctx
+        .http()
+        .post(`/api/students/${studentId}/guardians`)
+        .set(head())
+        .send({ guardianId, relationship: 'MOTHER', isPrimary: true })
+        .expect(201);
+
+      const login = await ctx
+        .http()
+        .post('/api/auth/login')
+        .send({ email: TEACHER_EMAIL, password: TEACHER_PASSWORD })
+        .expect(200);
+
+      return { token: login.body.tokens.accessToken, guardianId };
+    }
+
+    it('links the existing staff login instead of inviting them again', async () => {
+      const { guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      const before = invitations.length;
+
+      const response = await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        status: 'ACTIVE',
+        usesStaffLogin: true,
+      });
+      // Nothing to accept, so nothing is sent.
+      expect(invitations).toHaveLength(before);
+
+      // And no second membership was created — the constraint that made this
+      // hard in the first place.
+      expect(
+        await ctx.db.membership.count({
+          where: {
+            schoolId: school.schoolId,
+            user: { email: TEACHER_EMAIL },
+          },
+        }),
+      ).toBe(1);
+    });
+
+    it('opens the portal for their own child on their staff token', async () => {
+      const { token, guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      const me = await ctx
+        .http()
+        .get('/api/portal/me')
+        .set(bearer(token))
+        .expect(200);
+      expect(me.body.children).toHaveLength(1);
+
+      await ctx
+        .http()
+        .get(`/api/portal/children/${ada}`)
+        .set(bearer(token))
+        .expect(200);
+    });
+
+    it('still cannot see another family\u2019s child', async () => {
+      const { token, guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      // Chidi is Ngozi's. A teacher may read Chidi through the staff API, but
+      // the portal is about their own children and answers 404.
+      await ctx
+        .http()
+        .get(`/api/portal/children/${chidi}`)
+        .set(bearer(token))
+        .expect(404);
+    });
+
+    it('keeps their staff access exactly as it was', async () => {
+      const { token, guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      // Gaining the portal must not gain them anything else. A teacher does not
+      // hold finance.read, and linking a guardian record does not change that.
+      await ctx.http().get('/api/students').set(bearer(token)).expect(200);
+      await ctx
+        .http()
+        .get('/api/finance/invoices')
+        .set(bearer(token))
+        .expect(403);
+      await ctx.http().get('/api/users').set(bearer(token)).expect(403);
+    });
+
+    it('shuts the portal to staff who are not a parent here', async () => {
+      // The head teacher: every permission their school has, but no child here.
+      await ctx.http().get('/api/portal/me').set(head()).expect(403);
+
+      // The notification routes matter most. Every other portal route resolves a
+      // guardian in the service and would refuse them there too, but these do
+      // not — so on these the guard is the only thing in the way.
+      await ctx.http().get('/api/portal/notifications').set(head()).expect(403);
+      await ctx
+        .http()
+        .post('/api/portal/notifications/read-all')
+        .set(head())
+        .expect(403);
+    });
+
+    it('opens the notification routes once they are a parent here', async () => {
+      const { token, guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      await ctx
+        .http()
+        .get('/api/portal/notifications')
+        .set(bearer(token))
+        .expect(403);
+
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      await ctx
+        .http()
+        .get('/api/portal/notifications')
+        .set(bearer(token))
+        .expect(200);
+    });
+
+    it('closes with the portal when the school turns it off', async () => {
+      const { token, guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      await ctx
+        .http()
+        .patch('/api/schools/me/settings')
+        .set(head())
+        .send({ portalEnabled: false })
+        .expect(200);
+
+      await ctx.http().get('/api/portal/me').set(bearer(token)).expect(403);
+
+      await ctx
+        .http()
+        .patch('/api/schools/me/settings')
+        .set(head())
+        .send({ portalEnabled: true })
+        .expect(200);
+    });
+
+    it('reports their portal status without pretending it is an invitation', async () => {
+      const { guardianId } = await teacherWhoIsAlsoParentOf(ada);
+      const statusOf = () =>
+        ctx
+          .http()
+          .get(`/api/guardians/${guardianId}/portal-access`)
+          .set(head())
+          .expect(200);
+
+      // Working here is not the same as having portal access: until someone
+      // grants it, this guardian record points at no login.
+      expect((await statusOf()).body).toMatchObject({ status: 'NONE' });
+
+      await ctx
+        .http()
+        .post(`/api/guardians/${guardianId}/portal-access`)
+        .set(head())
+        .expect(201);
+
+      // And afterwards it must not read as an invitation: they have worked here
+      // for years, so "INVITED" would be nonsense.
+      const after = await statusOf();
+      expect(after.body.usesStaffLogin).toBe(true);
+      expect(after.body.status).toBe('ACTIVE');
+      expect(after.body.invitedAt).toBeNull();
     });
   });
 });

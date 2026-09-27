@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -23,8 +24,7 @@ import {
 } from '@nestjs/swagger';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
-import { PERMISSIONS } from '../common/constants/permissions';
-import { CurrentSchool, RequirePermissions } from '../common/decorators';
+import { CurrentSchool } from '../common/decorators';
 import { FileDto } from '../files/dto/file.dto';
 import { MAX_UPLOAD_BYTES } from '../files/file-policy';
 import { ReceiptDto, StatementDto } from '../finance/dto/document.dto';
@@ -48,17 +48,21 @@ import {
   PortalTermQueryDto,
   SubmitPaymentDto,
 } from './dto/portal.dto';
+import { PortalGuard } from './portal.guard';
 import { PortalService } from './portal.service';
 
 /**
- * The parent portal. Every route needs portal.access — which only the Parent
- * role holds, so staff tokens are refused here — and every child-specific
- * route is further limited to the parent's own linked children.
+ * The parent portal. A caller gets in by holding portal.access (the Parent
+ * role's only permission) or by being a guardian at this school — which is how a
+ * member of staff who is also a parent here reaches their own children. Every
+ * child-specific route is then limited to their own linked children.
  */
 @ApiTags('Parent Portal')
 @ApiBearerAuth()
 @Controller('portal')
-@RequirePermissions(PERMISSIONS.PORTAL_ACCESS)
+// Not @RequirePermissions(PORTAL_ACCESS): a teacher who is also a parent here
+// gets in through their guardian record instead. See PortalGuard.
+@UseGuards(PortalGuard)
 export class PortalController {
   constructor(
     private readonly portal: PortalService,

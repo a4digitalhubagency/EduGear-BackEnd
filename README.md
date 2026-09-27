@@ -552,8 +552,16 @@ payment from parents · an in-app notification inbox · the daily attendance reg
 - Re-sending an invitation retires the earlier link — for staff too, who previously could not be
   re-invited while an invitation was pending.
 
-Known limit: a membership has one role per school, so a teacher who is also a parent at the same
-school cannot hold both logins. Parents at a *different* school than they work at are fine.
+**A teacher who is also a parent here** uses one login for both. A membership carries one role, so
+rather than giving such a person two memberships — which would make "their membership at this
+school" ambiguous in every query that asks — the portal decides admission on the **guardian link**:
+holding `portal.access` gets a parent in, and being a guardian at this school gets a member of staff
+in. Granting portal access to a guardian who already works here links their existing login instead of
+sending an invitation, because there is nothing for them to accept.
+
+What this cannot express is "while acting as a parent, you may not act as staff" — their token
+carries both, and `assertWard` is what confines the portal to their own children. For one person who
+genuinely is both, that is the truth rather than a compromise.
 
 Next: **Phase 5 — Administration.**
 

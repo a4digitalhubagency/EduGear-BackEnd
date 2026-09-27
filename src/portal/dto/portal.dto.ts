@@ -21,6 +21,13 @@ export class PortalAccessDto {
   status: 'NONE' | MembershipStatus;
   @ApiPropertyOptional({ nullable: true }) invitedAt: Date | null;
   @ApiPropertyOptional({ nullable: true }) acceptedAt: Date | null;
+
+  @ApiPropertyOptional({
+    description:
+      'True when this parent is also a member of staff here and reaches the ' +
+      'portal with their existing login, so no invitation was sent.',
+  })
+  usesStaffLogin?: boolean;
 }
 
 export class PortalTermQueryDto {
