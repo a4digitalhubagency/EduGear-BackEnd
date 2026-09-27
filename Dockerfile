@@ -17,6 +17,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate && npm run build
+# A build that emits nothing still exits 0. Fail here rather than shipping an
+# image whose only symptom is "Cannot find module '/app/dist/main'" at boot.
+RUN test -f dist/main.js || (echo 'Build produced no dist/main.js' >&2 && exit 1)
 
 FROM node:22-alpine AS runtime
 WORKDIR /app

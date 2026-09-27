@@ -90,6 +90,12 @@ export class PortalService {
     const links = await this.prisma.studentGuardian.findMany({
       where: { guardianId: guardian.id },
       select: { studentId: true },
+      // Without this the list can come back in a different order each time a
+      // parent opens the app, which reads as a glitch.
+      orderBy: [
+        { student: { lastName: 'asc' } },
+        { student: { firstName: 'asc' } },
+      ],
     });
     return Promise.all(links.map((link) => this.childSummary(link.studentId)));
   }

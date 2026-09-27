@@ -307,6 +307,14 @@ export class ResultSheetsService {
           select: { studentId: true, firstName: true, lastName: true },
         },
       },
+      // Ties share a place, so position alone leaves their order to the
+      // database — which means a class list can reorder between two refreshes.
+      // Name breaks the tie, the way a printed sheet does.
+      orderBy: [
+        { position: 'asc' },
+        { student: { lastName: 'asc' } },
+        { student: { firstName: 'asc' } },
+      ],
     });
     const subjectRows = await this.prisma.subjectResult.findMany({
       where: { resultSheetId: id },

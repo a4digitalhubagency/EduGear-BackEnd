@@ -86,9 +86,71 @@ jobs:
         run: npx prisma migrate deploy
 
   docker:
-    name: Build production image
+    name: Build production image and boot it
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: edugear
+          POSTGRES_PASSWORD: edugear
+          POSTGRES_DB: edugear_boot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U edugear"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Build image
         run: docker build -t edugear-backend:${{ github.sha }} .
+
+      # Building the image is not the same as the image working. A build that
+      # emitted nothing still exits 0, and the only symptom would have been a
+      # crash loop on the first deploy — so boot it here, in production mode,
+      # and make it answer.
+      - name: Apply migrations
+        run: docker run --rm --network host
+          -e DATABASE_URL="$DB_URL" -e DIRECT_URL="$DB_URL"
+          --entrypoint npx edugear-backend:${{ github.sha }} prisma migrate deploy
+        env:
+          DB_URL: postgresql://edugear:edugear@localhost:5432/edugear_boot?schema=public
+
+      - name: Boot it and check health
+        run: |
+          docker run -d --name boot --network host \
+            -e NODE_ENV=production \
+            -e PORT=3999 \
+            -e DATABASE_URL="$DB_URL" -e DIRECT_URL="$DB_URL" \
+            -e REDIS_URL=redis://localhost:6379/3 \
+            -e JWT_ACCESS_SECRET=ci-only-secret-value-long-enough-for-validation \
+            -e CORS_ORIGINS=https://app.example.test \
+            -e SWAGGER_ENABLED=false \
+            edugear-backend:${{ github.sha }}
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3999/api/health > /dev/null; then
+              echo "Healthy after ${attempt} attempt(s)."
+              docker rm -f boot > /dev/null
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The image did not become healthy."
+          docker logs boot
+          exit 1
+        env:
+          DB_URL: postgresql://edugear:edugear@localhost:5432/edugear_boot?schema=public

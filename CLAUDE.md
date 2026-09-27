@@ -46,7 +46,14 @@ limits — so most suites are unaffected by rate limiting, except
 the app.
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint with `--max-warnings=0`, typecheck,
-both test suites, `npm run build`, a clean-database `migrate deploy`, and a Docker image build.
+both test suites, `npm run build`, a clean-database `migrate deploy`, and then builds the production
+image **and boots it in production mode against Postgres and Redis until `/api/health` answers**. That
+last part exists because a build that emits nothing still exits 0: `*.tsbuildinfo` reaching the build
+context once made tsc skip emitting while `deleteOutDir` had already emptied `dist`, and the image
+shipped with no `dist/main.js`. It is git-ignored, so a fresh CI checkout never reproduced it. The
+Dockerfile now also asserts `dist/main.js` exists before the runtime stage.
+
+[deploy.yml](.github/workflows/deploy.yml) deploys to Railway only after CI is green on `main`.
 
 ## Tenant isolation — the invariant everything else protects
 

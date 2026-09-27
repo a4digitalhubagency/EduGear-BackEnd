@@ -1,5 +1,10 @@
 node_modules
 dist
+# TypeScript's incremental cache. Left in the build context it tells tsc that
+# everything is already compiled, while deleteOutDir has just emptied dist — so
+# the image builds "successfully" with no dist/main.js in it. It is git-ignored,
+# which is why a fresh CI checkout never hit this and a local build always did.
+*.tsbuildinfo
 coverage
 .git
 .github
