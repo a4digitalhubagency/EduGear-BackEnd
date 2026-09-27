@@ -1,14 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PlatformRole, SchoolStatus, UserStatus } from '@prisma/client';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
@@ -68,6 +72,23 @@ export class SuspendSchoolDto {
   reason: string;
 }
 
+export class SetStorageQuotaDto {
+  @ApiProperty({
+    example: 4096,
+    minimum: 1,
+    maximum: 1_000_000,
+    description: 'Megabytes. Null restores the platform default.',
+    nullable: true,
+  })
+  @Type(() => Number)
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(1)
+  @Max(1_000_000)
+  @IsOptional()
+  storageQuotaMb: number | null;
+}
+
 const SCHOOL_SORT = ['createdAt', 'name', 'status'] as const;
 
 export class QuerySchoolsDto extends PaginationQueryDto {
@@ -104,6 +125,14 @@ export class PlatformSchoolDto {
   @ApiProperty() classArmCount: number;
   @ApiProperty({ description: 'Bytes stored across all uploads' })
   storageBytes: number;
+
+  @ApiProperty({ description: 'Upload ceiling in megabytes' })
+  storageQuotaMb: number;
+
+  @ApiProperty({
+    description: 'False while the school is on the platform default',
+  })
+  storageQuotaIsCustom: boolean;
 
   @ApiPropertyOptional({
     nullable: true,

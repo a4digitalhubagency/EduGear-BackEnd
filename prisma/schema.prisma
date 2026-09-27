@@ -110,6 +110,9 @@ model School {
   status      SchoolStatus @default(PENDING)
   timezone    String       @default("Africa/Lagos")
   currency    String       @default("NGN")
+  /// Upload ceiling in megabytes, set by A4 rather than by the school. Null
+  /// means the platform default — a school must not be able to raise its own.
+  storageQuotaMb Int?
   /// Soft-delete marker; tenant data is never hard-deleted on cancellation.
   deletedAt   DateTime?
   createdAt   DateTime     @default(now())

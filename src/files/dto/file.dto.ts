@@ -36,3 +36,16 @@ export class FileDto {
   @ApiPropertyOptional({ nullable: true }) linkedId: string | null;
   @ApiProperty() createdAt: Date;
 }
+
+export class StorageQuotaDto {
+  @ApiProperty({ description: 'Bytes currently stored by this school' })
+  usedBytes: number;
+
+  @ApiProperty({ description: 'The ceiling, set by EduGear' })
+  limitBytes: number;
+
+  @ApiProperty() remainingBytes: number;
+
+  @ApiProperty({ description: 'One decimal place, capped at 100' })
+  percentUsed: number;
+}

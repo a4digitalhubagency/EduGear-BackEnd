@@ -217,6 +217,13 @@ export class EnvironmentVariables {
   @IsString()
   STORAGE_LOCAL_DIR = 'storage';
 
+  /// Default upload ceiling per school, in megabytes. A school cannot raise its
+  /// own; A4 lifts it per tenant from the platform console.
+  @IsInt()
+  @Min(1)
+  @Transform(toInt)
+  STORAGE_QUOTA_MB = 2048;
+
   // Optional so local development and CI can run without Redis; required in
   // production, where falling back to per-instance state would be silent breakage.
   @IsString()

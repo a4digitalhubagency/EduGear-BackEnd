@@ -1,6 +1,7 @@
 import { MembershipStatus, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { EmailService } from '../src/notifications/email.service';
+import { advisoryLockKey } from '../src/database/row-lock';
 import {
   closeTestApp,
   createTestApp,
@@ -652,6 +653,195 @@ describe('File uploads', () => {
           paidAt: '2026-10-01T10:00:00Z',
         })
         .expect(201);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Storage quota
+  // -------------------------------------------------------------------------
+
+  describe('the storage quota', () => {
+    /** A quota small enough that two padded photos overrun it. */
+    const setQuotaBytes = (bytes: number) =>
+      ctx.db.school.update({
+        where: { id: school.schoolId },
+        data: { storageQuotaMb: Math.max(1, Math.ceil(bytes / (1024 * 1024))) },
+      });
+
+    afterEach(async () => {
+      await ctx.db.school.update({
+        where: { id: school.schoolId },
+        data: { storageQuotaMb: null },
+      });
+    });
+
+    it('reports what the school has used', async () => {
+      await uploadPhoto(ada, file.jpeg(), 'ada.jpg', 'image/jpeg').expect(201);
+
+      const response = await ctx
+        .http()
+        .get('/api/files/quota')
+        .set(head())
+        .expect(200);
+
+      expect(response.body.usedBytes).toBeGreaterThan(0);
+      // The platform default, since A4 has set no override for this school.
+      expect(response.body.limitBytes).toBe(2048 * 1024 * 1024);
+      expect(response.body.remainingBytes).toBe(
+        response.body.limitBytes - response.body.usedBytes,
+      );
+    });
+
+    it('refuses an upload that would cross the ceiling', async () => {
+      await setQuotaBytes(1);
+
+      // One megabyte of quota, and a two-megabyte photo.
+      const response = await uploadPhoto(
+        ada,
+        file.jpeg(2 * 1024 * 1024),
+        'huge.jpg',
+        'image/jpeg',
+      );
+      expect(response.status).toBe(409);
+      expect(response.body.message).toMatch(/file storage/i);
+
+      // And nothing was left behind in the bucket or the table.
+      expect(
+        await ctx.db.fileObject.count({
+          where: { schoolId: school.schoolId, displayName: 'huge.jpg' },
+        }),
+      ).toBe(0);
+    });
+
+    it('holds when uploads arrive at the same moment', async () => {
+      await setQuotaBytes(1);
+      const half = Math.floor((1024 * 1024) / 2) + 1000;
+
+      // Fired together: without the advisory lock each one reads the same total,
+      // every one passes the check, and the quota is overrun by a multiple.
+      const results = await Promise.all([
+        uploadPhoto(ada, file.jpeg(half), 'a.jpg', 'image/jpeg'),
+        uploadPhoto(ada, file.jpeg(half), 'b.jpg', 'image/jpeg'),
+        uploadPhoto(chidi, file.jpeg(half), 'c.jpg', 'image/jpeg'),
+      ]);
+
+      const accepted = results.filter((r) => r.status === 201).length;
+      expect(accepted).toBeGreaterThanOrEqual(1);
+
+      // The ceiling holds however the three interleaved.
+      const used = await ctx.db.fileObject.aggregate({
+        where: { schoolId: school.schoolId },
+        _sum: { sizeBytes: true },
+      });
+      expect(used._sum.sizeBytes ?? 0).toBeLessThanOrEqual(1024 * 1024);
+    });
+
+    it('serialises one school\u2019s quota checks, and only that school\u2019s', async () => {
+      // The HTTP test above can only catch the unlocked case when the requests
+      // happen to overlap, and the transaction is short by design. This proves
+      // the primitive underneath it instead, deterministically: hold the lock
+      // and watch who waits.
+      const mine = advisoryLockKey('storageQuota', school.schoolId);
+      const theirs = advisoryLockKey('storageQuota', other.schoolId);
+      expect(mine).not.toEqual(theirs);
+
+      let released = false;
+      const holder = ctx.db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock(${mine.toString()}::bigint)`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        released = true;
+      });
+
+      // Long enough that the lock is certainly held before either attempt.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Another school's key is a different lock, so this must not wait.
+      await ctx.db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock(${theirs.toString()}::bigint)`,
+        );
+      });
+      expect(released).toBe(false);
+
+      // The same school's key does wait, and only proceeds once it is freed.
+      await ctx.db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock(${mine.toString()}::bigint)`,
+        );
+      });
+      expect(released).toBe(true);
+
+      await holder;
+    });
+
+    it('frees the space again when a file is deleted', async () => {
+      await setQuotaBytes(1);
+      const big = file.jpeg(600 * 1024);
+
+      await uploadPhoto(ada, big, 'first.jpg', 'image/jpeg').expect(201);
+      // No room for a second.
+      await uploadPhoto(chidi, big, 'second.jpg', 'image/jpeg').expect(409);
+
+      await ctx
+        .http()
+        .delete(`/api/students/${ada}/photo`)
+        .set(head())
+        .expect(200);
+
+      await uploadPhoto(chidi, big, 'second.jpg', 'image/jpeg').expect(201);
+    });
+
+    it('spends each school\u2019s allowance separately', async () => {
+      // Both schools on a 1 MB ceiling, and this one fills it.
+      await setQuotaBytes(1);
+      await ctx.db.school.update({
+        where: { id: other.schoolId },
+        data: { storageQuotaMb: 1 },
+      });
+
+      const big = file.jpeg(900 * 1024);
+      await uploadPhoto(ada, big, 'ada.jpg', 'image/jpeg').expect(201);
+      // No room left here.
+      await uploadPhoto(chidi, big, 'chidi.jpg', 'image/jpeg').expect(409);
+
+      // But the rival school has spent nothing, so its upload must go through.
+      // If the ceiling were measured across tenants, this would be refused.
+      await ctx
+        .http()
+        .post('/api/schools/me/logo')
+        .set(bearer(other.accessToken))
+        .attach('file', big, {
+          filename: 'logo.jpg',
+          contentType: 'image/jpeg',
+        })
+        .expect(201);
+
+      await ctx.db.school.update({
+        where: { id: other.schoolId },
+        data: { storageQuotaMb: null },
+      });
+    });
+
+    it('lets A4 raise the ceiling, and the school cannot', async () => {
+      await setQuotaBytes(1);
+      const big = file.jpeg(1_500_000);
+      await uploadPhoto(ada, big, 'big.jpg', 'image/jpeg').expect(409);
+
+      // A school must not be able to lift its own limit.
+      await ctx
+        .http()
+        .patch('/api/schools/me/settings')
+        .set(head())
+        .send({ storageQuotaMb: 99_999 })
+        .expect(400);
+
+      await ctx.db.school.update({
+        where: { id: school.schoolId },
+        data: { storageQuotaMb: 50 },
+      });
+      await uploadPhoto(ada, big, 'big.jpg', 'image/jpeg').expect(201);
     });
   });
 });

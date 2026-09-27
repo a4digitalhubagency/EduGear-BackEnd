@@ -20,20 +20,27 @@ import {
   ApiConsumes,
   ApiCreatedResponse,
   ApiNoContentResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { FilePurpose } from '@prisma/client';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { AuditService } from '../audit/audit.service';
-import { CurrentSchool } from '../common/decorators';
+import { CurrentSchool, RequirePermissions } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
-import { FileDto, QueryFilesDto, UploadFileDto } from './dto/file.dto';
+import {
+  FileDto,
+  QueryFilesDto,
+  StorageQuotaDto,
+  UploadFileDto,
+} from './dto/file.dto';
 import { MAX_UPLOAD_BYTES } from './file-policy';
 import { FilesService } from './files.service';
 
@@ -121,6 +128,17 @@ export class FilesController {
       },
     });
     return uploaded;
+  }
+
+  @Get('quota')
+  @RequirePermissions(PERMISSIONS.SCHOOL_READ)
+  @ApiOperation({
+    summary: 'How much file storage this school has used',
+    description: 'The ceiling is set by EduGear, not by the school.',
+  })
+  @ApiOkResponse({ type: StorageQuotaDto })
+  quota(@CurrentSchool() schoolId: string): Promise<StorageQuotaDto> {
+    return this.files.quota(schoolId);
   }
 
   @Get()

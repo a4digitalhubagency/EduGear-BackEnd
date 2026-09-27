@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { FileObject, FilePurpose, Prisma } from '@prisma/client';
 import { AccessControlService } from '../auth/access-control.service';
@@ -7,11 +8,14 @@ import { RequestContext } from '../common/context/request-context';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
+import { AppConfig } from '../config/configuration';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
+import { lockSchoolScope } from '../database/row-lock';
 import { FileDto, QueryFilesDto } from './dto/file.dto';
 import { checkFile, safeDisplayName, storageKey } from './file-policy';
 import { StorageService } from './storage/storage.service';
+import { StorageQuotaDto } from './dto/file.dto';
 
 export interface IncomingFile {
   buffer: Buffer;
@@ -60,6 +64,7 @@ export class FilesService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly storage: StorageService,
     private readonly accessControl: AccessControlService,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
   async upload(request: UploadRequest, schoolId: string): Promise<FileDto> {
@@ -81,39 +86,66 @@ export class FilesService {
       );
     }
 
+    // Hoisted so the narrowing survives into the transaction's closure.
+    const kind = check.kind;
     const id = randomUUID();
-    const key = storageKey(schoolId, request.purpose, id, check.kind.extension);
+    const key = storageKey(schoolId, request.purpose, id, kind.extension);
     const auth = RequestContext.getAuth();
 
     // Written to storage first: a row pointing at bytes that are not there is
     // worse than bytes nothing points at, and the orphan is easy to sweep.
-    await this.storage.driver.put(key, request.buffer, check.kind.contentType);
+    await this.storage.driver.put(key, request.buffer, kind.contentType);
 
     try {
-      const row = await this.prisma.fileObject.create({
-        data: {
-          id,
-          schoolId,
-          purpose: request.purpose,
-          key,
-          displayName: safeDisplayName(
-            request.originalName,
-            check.kind.extension,
-          ),
-          contentType: check.kind.contentType,
-          sizeBytes: request.buffer.length,
-          checksum: createHash('sha256').update(request.buffer).digest('hex'),
-          linkedType: request.link?.type ?? null,
-          linkedId: request.link?.id ?? null,
-          uploadedByMembershipId: auth?.membershipId ?? null,
-          uploadedByUserId: auth?.userId ?? null,
-        },
+      const row = await this.prisma.$transaction(async (tx) => {
+        // The quota is a sum over every file, so there is no row to lock. The
+        // advisory lock serialises check-then-insert for this school: without
+        // it, uploads fired in parallel each read the same total and every one
+        // of them passes, which is exactly how a quota gets overrun.
+        await lockSchoolScope(tx, 'storageQuota', schoolId);
+        await this.assertWithinQuota(tx, schoolId, request.buffer.length);
+
+        return tx.fileObject.create({
+          data: {
+            id,
+            schoolId,
+            purpose: request.purpose,
+            key,
+            displayName: safeDisplayName(request.originalName, kind.extension),
+            contentType: kind.contentType,
+            sizeBytes: request.buffer.length,
+            checksum: createHash('sha256').update(request.buffer).digest('hex'),
+            linkedType: request.link?.type ?? null,
+            linkedId: request.link?.id ?? null,
+            uploadedByMembershipId: auth?.membershipId ?? null,
+            uploadedByUserId: auth?.userId ?? null,
+          },
+        });
       });
       return this.toDto(row);
     } catch (error) {
       await this.discard(key);
       throw error;
     }
+  }
+
+  /** What this school has used and what it is allowed. */
+  async quota(schoolId: string): Promise<StorageQuotaDto> {
+    const [limitBytes, used] = await Promise.all([
+      this.quotaBytes(schoolId),
+      this.prisma.fileObject.aggregate({ _sum: { sizeBytes: true } }),
+    ]);
+    const usedBytes = used._sum.sizeBytes ?? 0;
+
+    return {
+      usedBytes,
+      limitBytes,
+      remainingBytes: Math.max(0, limitBytes - usedBytes),
+      percentUsed:
+        limitBytes > 0
+          ? Math.min(100, Math.round((usedBytes / limitBytes) * 1000) / 10)
+          : 100,
+    };
   }
 
   /** The bytes, once the caller has been allowed to have them. */
@@ -267,6 +299,44 @@ export class FilesService {
   private async forget(file: FileObject): Promise<void> {
     await this.prisma.fileObject.delete({ where: { id: file.id } });
     await this.discard(file.key);
+  }
+
+  /**
+   * The ceiling in bytes: the school's own override when A4 has set one,
+   * otherwise the platform default.
+   */
+  private async quotaBytes(schoolId: string): Promise<number> {
+    const school = await RequestContext.runAsSystem(() =>
+      this.prisma.school.findUnique({
+        where: { id: schoolId },
+        select: { storageQuotaMb: true },
+      }),
+    );
+
+    const megabytes =
+      school?.storageQuotaMb ??
+      this.config.get('storage', { infer: true }).quotaMb;
+
+    return megabytes * 1024 * 1024;
+  }
+
+  private async assertWithinQuota(
+    tx: TxClient,
+    schoolId: string,
+    incomingBytes: number,
+  ): Promise<void> {
+    const limitBytes = await this.quotaBytes(schoolId);
+    const used = await tx.fileObject.aggregate({ _sum: { sizeBytes: true } });
+    const usedBytes = used._sum.sizeBytes ?? 0;
+
+    if (usedBytes + incomingBytes > limitBytes) {
+      const limitMb = Math.round(limitBytes / (1024 * 1024));
+      throw AppException.conflict(
+        `This school has used its ${limitMb} MB of file storage. Delete some ` +
+          'files, or ask EduGear to raise the limit.',
+        ErrorCode.CONFLICT,
+      );
+    }
   }
 
   private async discard(key: string): Promise<void> {

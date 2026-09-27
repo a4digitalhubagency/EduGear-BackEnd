@@ -94,6 +94,7 @@ export const AUDIT_ACTIONS = {
   PLATFORM_SCHOOL_SUSPENDED: 'platform.school_suspended',
   PLATFORM_SCHOOL_REACTIVATED: 'platform.school_reactivated',
   PLATFORM_SCHOOL_CANCELLED: 'platform.school_cancelled',
+  PLATFORM_SCHOOL_QUOTA_SET: 'platform.school_quota_set',
   RESULT_CREATED: 'result.created',
   RESULT_SUBMITTED: 'result.submitted',
   RESULT_APPROVED: 'result.approved',

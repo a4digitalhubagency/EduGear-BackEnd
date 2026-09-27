@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   MembershipStatus,
   Prisma,
@@ -11,6 +12,7 @@ import { AccessControlService } from '../auth/access-control.service';
 import { SYSTEM_ROLES } from '../common/constants/roles';
 import { RequestContext } from '../common/context/request-context';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
+import { AppConfig } from '../config/configuration';
 import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
@@ -18,6 +20,7 @@ import {
   PlatformSchoolDto,
   PlatformStatsDto,
   QuerySchoolsDto,
+  SetStorageQuotaDto,
   SuspendSchoolDto,
 } from './dto/platform.dto';
 
@@ -38,6 +41,7 @@ export class PlatformSchoolsService {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly audit: AuditService,
     private readonly accessControl: AccessControlService,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
   async list(query: QuerySchoolsDto): Promise<PaginatedDto<PlatformSchoolDto>> {
@@ -178,6 +182,36 @@ export class PlatformSchoolsService {
       schoolId,
       `Cancelled ${school.name}: ${dto.reason}`,
       { reason: dto.reason, previousStatus: school.status },
+    );
+
+    return this.findOne(schoolId);
+  }
+
+  /**
+   * Raises or lowers a school's upload ceiling. A commercial decision, so it is
+   * A4's to make — the school-facing settings deliberately cannot reach it, or a
+   * school could simply lift its own limit.
+   */
+  async setStorageQuota(
+    schoolId: string,
+    dto: SetStorageQuotaDto,
+  ): Promise<PlatformSchoolDto> {
+    const school = await this.requireSchool(schoolId);
+
+    await RequestContext.runAsSystem(() =>
+      this.prisma.school.update({
+        where: { id: schoolId },
+        data: { storageQuotaMb: dto.storageQuotaMb ?? null },
+      }),
+    );
+
+    await this.record(
+      AUDIT_ACTIONS.PLATFORM_SCHOOL_QUOTA_SET,
+      schoolId,
+      dto.storageQuotaMb === null || dto.storageQuotaMb === undefined
+        ? `Reset ${school.name} to the default storage quota`
+        : `Set ${school.name}'s storage quota to ${dto.storageQuotaMb} MB`,
+      { from: school.storageQuotaMb, to: dto.storageQuotaMb ?? null },
     );
 
     return this.findOne(schoolId);
@@ -365,6 +399,7 @@ export class PlatformSchoolsService {
       phone: string | null;
       state: string | null;
       status: SchoolStatus;
+      storageQuotaMb: number | null;
       deletedAt: Date | null;
       createdAt: Date;
     },
@@ -386,6 +421,10 @@ export class PlatformSchoolsService {
       phone: school.phone,
       state: school.state,
       status: school.status,
+      storageQuotaMb:
+        school.storageQuotaMb ??
+        this.config.get('storage', { infer: true }).quotaMb,
+      storageQuotaIsCustom: school.storageQuotaMb !== null,
       deletedAt: school.deletedAt,
       createdAt: school.createdAt,
       studentCount: usage?.studentCount ?? 0,

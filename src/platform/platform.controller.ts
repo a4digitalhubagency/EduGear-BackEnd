@@ -36,6 +36,7 @@ import {
   PlatformSchoolDto,
   PlatformStatsDto,
   QuerySchoolsDto,
+  SetStorageQuotaDto,
   SuspendSchoolDto,
 } from './dto/platform.dto';
 import { PlatformAdminService } from './platform-admin.service';
@@ -183,6 +184,24 @@ export class PlatformController {
     @Body() dto: SuspendSchoolDto,
   ): Promise<PlatformSchoolDto> {
     return this.schools.cancel(id, dto);
+  }
+
+  @Post('schools/:id/quota')
+  @RequirePlatformRole(...CAN_CHANGE)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Set a school's upload ceiling",
+    description:
+      'Megabytes, or null for the platform default. A commercial decision, so ' +
+      'the school-facing settings cannot reach it.',
+  })
+  @ApiOkResponse({ type: PlatformSchoolDto })
+  @HttpCode(HttpStatus.OK)
+  setQuota(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetStorageQuotaDto,
+  ): Promise<PlatformSchoolDto> {
+    return this.schools.setStorageQuota(id, dto);
   }
 
   // -------------------------------------------------------------------------
