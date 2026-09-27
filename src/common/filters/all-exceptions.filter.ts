@@ -16,8 +16,19 @@ import {
   RequestContext,
   TenantContextMissingError,
 } from '../context/request-context';
+import { reportError } from '../../observability/sentry';
 import { AppException } from '../errors/app.exception';
 import { ErrorCode } from '../errors/error-codes';
+
+/**
+ * Express's matched route (`/students/:id`) rather than the concrete path, so a
+ * failing endpoint is one issue instead of one per record id.
+ */
+function routePattern(request: Request): string | undefined {
+  // Express types `route` as `any`; the double cast is what stops that spreading.
+  const { route } = request as unknown as { route?: { path?: unknown } };
+  return typeof route?.path === 'string' ? route.path : undefined;
+}
 
 interface ErrorBody {
   statusCode: HttpStatus;
@@ -61,6 +72,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
         },
         `Unhandled error on ${request.method} ${body.path}`,
       );
+
+      // Only 5xx. A 403 or a 404 is the application working, and reporting them
+      // buries the ones that are not in noise nobody then reads.
+      reportError(exception, {
+        requestId: body.requestId,
+        schoolId: RequestContext.getTenantId(),
+        userId: RequestContext.getAuth()?.userId,
+        // The route pattern, not the path: /students/:id, so every id does not
+        // become its own issue.
+        route: `${request.method} ${routePattern(request) ?? body.path}`,
+        errorCode: body.errorCode,
+      });
     } else if (
       body.statusCode === HttpStatus.FORBIDDEN ||
       body.statusCode === HttpStatus.UNAUTHORIZED

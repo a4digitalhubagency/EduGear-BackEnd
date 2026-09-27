@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUrl,
@@ -37,6 +38,11 @@ const asString = (value: unknown): string | undefined =>
 const toInt = ({ value }: { value: unknown }) => {
   const raw = asString(value);
   return raw === undefined || raw === '' ? undefined : Number.parseInt(raw, 10);
+};
+
+const toFloat = ({ value }: { value: unknown }) => {
+  const raw = asString(value);
+  return raw === undefined || raw === '' ? undefined : Number.parseFloat(raw);
 };
 
 const toBool = ({ value }: { value: unknown }) => {
@@ -233,6 +239,25 @@ export class EnvironmentVariables {
   /** Namespaces every EduGear key so a shared Redis can host other tenants of the box. */
   @IsString()
   REDIS_KEY_PREFIX = 'edugear:';
+
+  /// Error reporting. Absent means errors stay in the logs, which is correct for
+  /// local development and wrong for production — a school should not be the one
+  /// who tells you the API is failing.
+  @IsString()
+  @IsOptional()
+  SENTRY_DSN?: string;
+
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  @Transform(toFloat)
+  SENTRY_TRACES_SAMPLE_RATE = 0.1;
+
+  /// Ties an error to the commit that caused it. Railway exposes the deployed
+  /// SHA, so this is set from it rather than maintained by hand.
+  @IsString()
+  @IsOptional()
+  APP_VERSION?: string;
 }
 
 export function validateEnv(

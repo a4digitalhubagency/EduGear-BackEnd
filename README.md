@@ -396,6 +396,60 @@ Target stack: **Railway** (API + Redis) · **Neon** (Postgres) · **Cloudflare R
   `/api/health`.
 - Set `trust proxy` is already handled; rate limiting keys off the forwarded client IP.
 
+### Deploying to Railway
+
+[railway.json](railway.json) builds from the Dockerfile and sets three things
+that matter:
+
+- `preDeployCommand: npx prisma migrate deploy` — migrations run **as a release
+  step**, once, before the new container takes traffic. Never on boot, where two
+  instances starting together would race each other.
+- `healthcheckPath: /api/health` — which probes Postgres and Redis, so a
+  container that cannot reach its database never receives a request.
+- `restartPolicyType: ON_FAILURE` with 3 retries, so a crash loop stops instead
+  of hammering the database.
+
+Deployment is gated on CI. [deploy.yml](.github/workflows/deploy.yml) triggers on
+CI completing successfully on `main` — Railway's own GitHub trigger deploys on
+push whether the tests passed or not, which is how a broken migration reaches
+production. It then polls `/api/health` until the new release answers.
+
+**Setting it up**, once:
+
+1. Create the service and point it at this repository. Add **Postgres** and
+   **Redis** (or use Neon for Postgres and reference its URL instead).
+2. Set the variables below. `DATABASE_URL` and `REDIS_URL` come from Railway's
+   own references (`${{Postgres.DATABASE_URL}}`, `${{Redis.REDIS_URL}}`);
+   `DIRECT_URL` is the unpooled connection, which migrations need.
+   `PORT` is injected — do not set it.
+3. Generate `JWT_ACCESS_SECRET` with `openssl rand -base64 48`.
+4. Set `APP_VERSION` to `${{RAILWAY_GIT_COMMIT_SHA}}` so an error in Sentry names
+   the commit that caused it.
+5. In GitHub, add the `RAILWAY_TOKEN` secret and an `APP_URL` variable (plus
+   `RAILWAY_SERVICE` if the service is not called `edugear-backend`).
+6. First deploy, then create the platform owner:
+   `railway run npm run platform:grant -- ops@a4technologies.ng OWNER --create`
+
+`CORS_ORIGINS` must name the real front-end origin; `*` is refused in production,
+as is booting without `REDIS_URL`.
+
+### Error reporting
+
+Errors go to Sentry when `SENTRY_DSN` is set, and **only 5xx** — a 403 or a 404
+is the application working, and reporting those buries the real ones in noise.
+
+Debugging a school's problem does not involve shipping their data to a third
+party. [sentry.ts](src/observability/sentry.ts) rebuilds every event from a
+whitelist rather than editing it, so no request body, header, cookie, query
+string, IP address, email or hostname leaves the process — and an integration
+added later cannot quietly start sending more. What does go out is the error, the
+route *pattern* (`/students/:id`, so one broken endpoint is one issue rather than
+one per record), and the ids needed to find the request in our own logs. Those
+are opaque UUIDs; the names behind them stay in the database.
+
+`sentry.spec.ts` tests that promise directly, including that a field nobody
+anticipated is not passed through.
+
 ### Environment variables
 
 Full list with defaults in [.env.example](.env.example). Required in every environment:
@@ -413,6 +467,8 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `R2_*` | Cloudflare R2. Without it, uploads are refused in production |
 | `PAYSTACK_SECRET_KEY` | Optional. Online payment is off until it is set |
 | `PAYSTACK_CALLBACK_URL` | Where Paystack returns the payer after checkout |
+| `SENTRY_DSN` | Optional, but set it in production |
+| `STORAGE_QUOTA_MB` | Default per-school upload ceiling (2048) |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a
 missing variable at runtime.

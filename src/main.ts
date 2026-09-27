@@ -1,3 +1,10 @@
+// Before every other import: instrumentation has to be in place before the
+// modules it watches are loaded.
+import { initSentry } from './observability/sentry';
+import { validateEnv } from './config/env.validation';
+
+const sentryEnabled = initSentry(validateEnv(process.env));
+
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -7,6 +14,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 import { applyHttpSettings } from './http-settings';
+import { flushSentry } from './observability/sentry';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -30,6 +38,13 @@ async function bootstrap(): Promise<void> {
   });
 
   app.enableShutdownHooks();
+  if (sentryEnabled) {
+    // Shutdown hooks close the app; a report generated on the way out still has
+    // to reach Sentry before the process goes.
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.on(signal, () => void flushSentry());
+    }
+  }
 
   if (appConfig.swaggerEnabled) {
     const document = SwaggerModule.createDocument(
@@ -68,6 +83,16 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.listen(appConfig.port, '0.0.0.0');
+
+  if (!sentryEnabled && appConfig.isProduction) {
+    // Not fatal — an unreported error is better than no service — but a school
+    // should never be the one who tells you the API is failing.
+    app
+      .get(Logger)
+      .warn(
+        'SENTRY_DSN is not set: errors will only reach the container logs.',
+      );
+  }
 }
 
 void bootstrap();

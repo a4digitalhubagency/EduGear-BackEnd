@@ -123,8 +123,8 @@ are **copied into each school** at provisioning so a school can retune its own r
   without it. Never make that fallback reachable in production. Refresh tokens stay in Postgres.
 - Redis failures must not break requests: cache reads fall through to the database, writes are logged.
   A failed *invalidation* is logged at error level because it leaves stale permissions until the TTL.
-- Migrations: `prisma migrate deploy` as a release step, never on container boot; `prisma db push` is
-  never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+- Migrations: `prisma migrate deploy` as a release step — [railway.json](railway.json)'s
+  `preDeployCommand`, never on container boot; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
@@ -251,6 +251,20 @@ every rule is explicit:
   bite on the next request, and there are only a handful of rows.
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
+
+### Error reporting
+
+Only 5xx reaches Sentry; a 403 is the application working.
+[sentry.ts](src/observability/sentry.ts) is initialised in
+[main.ts](src/main.ts) **before every other import**, because instrumentation has
+to precede the modules it watches — that is also why it reads the validated env
+object directly rather than through `ConfigService`.
+
+`scrub` rebuilds each event from a whitelist instead of deleting fields, so
+nothing a future integration attaches escapes by default. If you add a field to
+it, you are deciding to send a school's data to a third party — `sentry.spec.ts`
+is where that decision gets argued with. Tag with ids (`requestId`, `schoolId`,
+`userId`), never names, emails or bodies.
 
 ### Side effects
 
