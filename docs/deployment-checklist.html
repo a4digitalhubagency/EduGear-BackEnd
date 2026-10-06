@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EduGear Deployment Checklist</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 14mm 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 9.6pt; line-height: 1.45; color: #1b1f24; margin: 0;
+  }
+  h1 { font-size: 19pt; margin: 0 0 2pt; letter-spacing: -0.3pt; }
+  .sub { color: #5b6670; font-size: 9pt; margin-bottom: 12pt; }
+  h2 {
+    font-size: 11pt; margin: 12pt 0 5pt; padding-bottom: 3pt;
+    border-bottom: 1.6pt solid #1b1f24; letter-spacing: -0.2pt;
+  }
+  h2 .n {
+    display: inline-block; background: #1b1f24; color: #fff;
+    width: 16pt; height: 16pt; line-height: 16pt; text-align: center;
+    border-radius: 3pt; font-size: 9pt; margin-right: 6pt;
+  }
+  h3 { font-size: 9.6pt; margin: 10pt 0 4pt; color: #30363d; }
+  ul.check { list-style: none; padding: 0; margin: 0; }
+  ul.check li {
+    padding: 3pt 0 3pt 20pt; position: relative;
+    border-bottom: 0.4pt solid #eceff1;
+  }
+  ul.check li:before {
+    content: ""; position: absolute; left: 1pt; top: 5.2pt;
+    width: 9pt; height: 9pt; border: 1pt solid #8a949e; border-radius: 2pt;
+  }
+  ul.check li:last-child { border-bottom: none; }
+  code {
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    font-size: 8.5pt; background: #f2f4f6; padding: 0.5pt 2.5pt;
+    border-radius: 2pt; color: #0b3d62;
+  }
+  pre {
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    font-size: 8.2pt; background: #f7f8fa; border-left: 2.5pt solid #c3cbd4;
+    padding: 5pt 7pt; margin: 4pt 0 6pt; white-space: pre-wrap; line-height: 1.4;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 8pt; font-size: 8.6pt; }
+  th {
+    text-align: left; background: #f2f4f6; padding: 3.5pt 5pt;
+    border-bottom: 1pt solid #c3cbd4; font-size: 8.4pt;
+  }
+  td { padding: 3.5pt 5pt; border-bottom: 0.4pt solid #eceff1; vertical-align: top; }
+  td.k { font-family: "DejaVu Sans Mono", monospace; font-size: 8pt; color: #0b3d62; white-space: nowrap; }
+  .warn {
+    background: #fff6e5; border-left: 2.5pt solid #d98500;
+    padding: 5pt 8pt; margin: 6pt 0; font-size: 8.8pt;
+  }
+  .note {
+    background: #eef4fb; border-left: 2.5pt solid #2d6fb3;
+    padding: 5pt 8pt; margin: 6pt 0; font-size: 8.8pt;
+  }
+  .why { color: #5b6670; font-size: 8.4pt; font-style: italic; }
+  h2, h3 { page-break-after: avoid; break-after: avoid; }
+  ul.check li, tr, pre, .note, .warn {
+    page-break-inside: avoid; break-inside: avoid;
+  }
+  table { page-break-inside: auto; }
+  .pagebreak { page-break-before: always; }
+  footer {
+    margin-top: 10pt; padding-top: 5pt; border-top: 0.4pt solid #c3cbd4;
+    color: #8a949e; font-size: 7.8pt;
+    /* Never let the footer orphan onto a page of its own. */
+    page-break-before: avoid; break-before: avoid;
+    page-break-inside: avoid; break-inside: avoid;
+  }
+  .two { display: flex; gap: 10pt; }
+  .two > div { flex: 1; }
+  .env-head { font-weight: bold; font-size: 9pt; margin-bottom: 3pt; }
+</style>
+</head>
+<body>
+
+<h1>EduGear Backend — Deployment Checklist</h1>
+<div class="sub">Railway · two environments · A4 Technologies &nbsp;·&nbsp; prepared 6 October 2026</div>
+
+<div class="note">
+<strong>The shape:</strong> one Railway <em>project</em> with two <em>environments</em> —
+<code>production</code> (deploys from <code>main</code>) and <code>staging</code>
+(deploys from <code>develop</code>). Each gets its <strong>own</strong> Postgres and Redis.
+Staging is what your frontend engineer builds against; it carries demo data and Swagger,
+and it never shares a database with production.
+</div>
+
+<h2><span class="n">1</span>Before you touch Railway</h2>
+<ul class="check">
+  <li>Confirm CI is green on <code>main</code> — it now builds the production image <em>and boots it</em> until <code>/api/health</code> answers.</li>
+  <li>Create a <code>develop</code> branch from <code>main</code> if one does not exist: <code>git switch -c develop &amp;&amp; git push -u origin develop</code></li>
+  <li>Generate two different JWT secrets — never reuse one across environments:<br><code>openssl rand -base64 48</code> (run it twice, keep them apart)</li>
+  <li>Decide the two front-end origins (e.g. <code>https://app.edugear.ng</code> and <code>https://staging.edugear.ng</code>).</li>
+  <li>Create a Sentry project and copy its DSN. One DSN serves both; the environments are told apart by <code>SENTRY_ENVIRONMENT</code>.</li>
+  <li>Create <strong>two</strong> Cloudflare R2 buckets: <code>edugear-prod</code> and <code>edugear-staging</code>. <span class="why">Staging runs NODE_ENV=production, so without R2 every upload is refused and your FE engineer cannot test photos.</span></li>
+</ul>
+
+<h2><span class="n">2</span>Databases</h2>
+<table>
+  <tr><th style="width:22%">Environment</th><th style="width:30%">Recommended</th><th>Why</th></tr>
+  <tr><td><strong>production</strong></td><td>Neon Postgres</td><td>Point-in-time restore and branching. You hold fee records and receipts; "restore to 10 minutes ago" is the feature that matters when something goes wrong.</td></tr>
+  <tr><td><strong>staging</strong></td><td>Railway Postgres</td><td>Cheap and disposable. It is meant to be reset.</td></tr>
+  <tr><td><strong>both</strong></td><td>Railway Redis (one per environment)</td><td>Required in production — the app refuses to boot without it, because rate limiting and the permission cache would silently become per-instance.</td></tr>
+</table>
+<ul class="check">
+  <li>Provision the production database first and keep its credentials out of the staging environment entirely.</li>
+  <li>Add Redis to <strong>each</strong> environment separately — do not point both at one instance.</li>
+  <li>Note both connection strings: the pooled one for <code>DATABASE_URL</code>, the direct/unpooled one for <code>DIRECT_URL</code>. <span class="why">Migrations need the unpooled connection.</span></li>
+  <li>Turn on automated backups for production and note the retention window.</li>
+</ul>
+<div class="warn">
+<strong>Never share a database between environments.</strong> Staging gets reset and seeded with demo
+schools whose password is published in the README. One shared connection string is all it takes for
+that to become production data.
+</div>
+
+<h2><span class="n">3</span>Create the Railway service</h2>
+<ul class="check">
+  <li>New project → deploy from this GitHub repository. Railway reads <code>railway.json</code> and builds from the <code>Dockerfile</code>.</li>
+  <li>Name the service <code>edugear-backend</code>. <span class="why">If you name it something else, set the GitHub variable RAILWAY_SERVICE to match.</span></li>
+  <li>Create the second environment: <strong>Settings → Environments → New</strong>, call it <code>staging</code>.</li>
+  <li>Point <code>production</code> at the <code>main</code> branch and <code>staging</code> at <code>develop</code>.</li>
+  <li>Attach Postgres and Redis to each environment.</li>
+  <li>Confirm these came from <code>railway.json</code> and did not need setting by hand:
+    <code>preDeployCommand: npx prisma migrate deploy</code>, <code>healthcheckPath: /api/health</code>,
+    restart <code>ON_FAILURE</code> ×3.</li>
+</ul>
+
+<h2><span class="n">4</span>Variables</h2>
+<p class="why">Set these on each environment separately. <code>PORT</code> is injected by Railway — do not set it.</p>
+<table>
+  <tr><th style="width:30%">Variable</th><th style="width:33%">production</th><th>staging</th></tr>
+  <tr><td class="k">NODE_ENV</td><td><code>production</code></td><td><code>production</code> <span class="why">(deliberate — see note)</span></td></tr>
+  <tr><td class="k">DATABASE_URL</td><td>Neon pooled URL</td><td><code>${{Postgres.DATABASE_URL}}</code></td></tr>
+  <tr><td class="k">DIRECT_URL</td><td>Neon <em>unpooled</em> URL</td><td>same as DATABASE_URL</td></tr>
+  <tr><td class="k">REDIS_URL</td><td><code>${{Redis.REDIS_URL}}</code></td><td><code>${{Redis.REDIS_URL}}</code></td></tr>
+  <tr><td class="k">JWT_ACCESS_SECRET</td><td>secret #1</td><td>secret #2 — <strong>different</strong></td></tr>
+  <tr><td class="k">APP_URL</td><td>production API URL</td><td>staging API URL</td></tr>
+  <tr><td class="k">FRONTEND_URL</td><td><code>https://app.edugear.ng</code></td><td><code>https://staging.edugear.ng</code></td></tr>
+  <tr><td class="k">CORS_ORIGINS</td><td>the live front end only</td><td>staging front end <strong>+</strong> <code>http://localhost:5173</code></td></tr>
+  <tr><td class="k">SWAGGER_ENABLED</td><td><code>false</code></td><td><code>true</code> <span class="why">(the FE engineer's API reference)</span></td></tr>
+  <tr><td class="k">EMAIL_PROVIDER</td><td><code>resend</code></td><td><code>console</code> <span class="why">(no real email to parents from staging)</span></td></tr>
+  <tr><td class="k">RESEND_API_KEY</td><td>live key</td><td>—</td></tr>
+  <tr><td class="k">EMAIL_FROM</td><td>your verified sender</td><td>—</td></tr>
+  <tr><td class="k">PAYSTACK_SECRET_KEY</td><td><code>sk_live_…</code></td><td><code>sk_test_…</code></td></tr>
+  <tr><td class="k">PAYSTACK_CALLBACK_URL</td><td>live front-end return page</td><td>staging return page</td></tr>
+  <tr><td class="k">R2_ACCOUNT_ID</td><td colspan="2">same Cloudflare account for both</td></tr>
+  <tr><td class="k">R2_BUCKET</td><td><code>edugear-prod</code></td><td><code>edugear-staging</code></td></tr>
+  <tr><td class="k">R2_ACCESS_KEY_ID<br>R2_SECRET_ACCESS_KEY</td><td colspan="2">a separate token per bucket, each scoped to that bucket only</td></tr>
+  <tr><td class="k">SENTRY_DSN</td><td colspan="2">the same DSN in both</td></tr>
+  <tr><td class="k">SENTRY_ENVIRONMENT</td><td><code>production</code></td><td><code>staging</code></td></tr>
+  <tr><td class="k">APP_VERSION</td><td colspan="2"><code>${{RAILWAY_GIT_COMMIT_SHA}}</code></td></tr>
+  <tr><td class="k">STORAGE_QUOTA_MB</td><td><code>2048</code> (or your plan)</td><td><code>512</code></td></tr>
+</table>
+
+<div class="note">
+<strong>Why staging runs <code>NODE_ENV=production</code>.</strong> It makes staging behave like
+production: Redis is required, logs are JSON, stack traces never reach a client, and uploads need
+real object storage. A staging environment that behaves differently from production tells you
+nothing. Your FE engineer still gets a <code>requestId</code> in every error body — quote it and the
+full detail is in Sentry. <code>SENTRY_ENVIRONMENT</code> is what keeps staging noise out of your
+production alerts.
+</div>
+
+<h2><span class="n">5</span>Wire up deployment from CI</h2>
+<ul class="check">
+  <li>Railway → Account Settings → Tokens → create a token. Add it to GitHub as the secret <code>RAILWAY_TOKEN</code>.</li>
+  <li>GitHub → Settings → Variables → add <code>APP_URL</code> (your production API URL).</li>
+  <li>Add <code>RAILWAY_SERVICE</code> only if your service is not called <code>edugear-backend</code>.</li>
+  <li>In Railway, <strong>turn off</strong> the automatic GitHub deploy trigger for <code>production</code>.
+    <span class="why">It fires on push whether the tests passed or not. deploy.yml waits for CI to go green first — that is the whole point.</span></li>
+  <li>Leave the automatic trigger <strong>on</strong> for <code>staging</code>, so the FE engineer always has the latest <code>develop</code>.</li>
+</ul>
+
+<h2><span class="n">6</span>First deploy</h2>
+<ul class="check">
+  <li>Deploy <code>staging</code> first. Always.</li>
+  <li>Watch the logs for <code>Permission catalogue synced</code> and <code>Nest application successfully started</code>.</li>
+  <li>Check health: <code>curl https://&lt;staging&gt;/api/health</code> → expect <code>database</code> and <code>cache</code> both <code>up</code>.</li>
+  <li>Open <code>https://&lt;staging&gt;/api/docs</code> and confirm Swagger loads.</li>
+  <li>Only then deploy <code>production</code>, and repeat the health check.</li>
+  <li>Confirm <code>https://&lt;production&gt;/api/docs</code> returns <strong>404</strong>. <span class="why">Swagger must be off in production.</span></li>
+</ul>
+
+<h2><span class="n">7</span>Seed staging for the frontend engineer</h2>
+<pre>railway environment staging
+railway run npm run db:seed</pre>
+<ul class="check">
+  <li>Run the seed <strong>against staging only</strong>. It creates two demo schools — two tenants, so cross-tenant mistakes show up immediately.</li>
+  <li>Give the FE engineer: the staging base URL, <code>/api/docs</code>, and the demo logins. Password: <code>Demo9Access2026</code></li>
+  <li>Confirm their <code>localhost:5173</code> is in the staging <code>CORS_ORIGINS</code>.</li>
+  <li>Show them the reset procedure for when they corrupt the data (below).</li>
+</ul>
+<div class="warn">
+<strong>The seed refuses to run against production</strong> — it checks <code>NODE_ENV</code> and the
+shape of <code>DATABASE_URL</code>. That guard exists because <code>railway run</code> uses whichever
+environment the CLI is linked to, and a wrong link looks exactly like a right one. Run
+<code>railway status</code> before anything destructive.
+</div>
+
+<h3>Resetting staging</h3>
+<pre>railway environment staging
+railway status            # confirm it says staging, not production
+railway run npx prisma migrate reset --force
+railway run npm run db:seed</pre>
+
+<h2><span class="n">8</span>Create the platform owner (production)</h2>
+<pre>railway environment production
+railway run npm run platform:grant -- ops@a4technologies.ng OWNER --create</pre>
+<ul class="check">
+  <li>Save the printed password somewhere safe, then sign in at <code>POST /api/platform/auth/login</code> and change it.</li>
+  <li>Repeat for staging with a <strong>different</strong> email and password.</li>
+  <li>Confirm the account belongs to no school — the command refuses otherwise, and that separation is what stops a compromised school login reaching the platform console.</li>
+</ul>
+
+<h2><span class="n">9</span>Paystack</h2>
+<ul class="check">
+  <li>Paystack dashboard → <strong>Test mode</strong> → set the webhook URL to <code>https://&lt;staging&gt;/api/webhooks/paystack</code></li>
+  <li>Paystack dashboard → <strong>Live mode</strong> → set the webhook URL to <code>https://&lt;production&gt;/api/webhooks/paystack</code></li>
+  <li>Make a test card payment on staging and confirm the invoice settles and a receipt number is issued.</li>
+  <li>Check the audit log for <code>payment.online_settled</code>.</li>
+</ul>
+
+<h2><span class="n">10</span>Prove it works — production smoke test</h2>
+<ul class="check">
+  <li><code>/api/health</code> returns 200 with database and cache <code>up</code>.</li>
+  <li><code>/api/docs</code> returns 404.</li>
+  <li>Register a throwaway school, admit a student, raise an invoice, record and verify a payment — confirm the receipt number is issued and the balance reaches zero.</li>
+  <li>From a second school's token, request the first school's student → expect <strong>404</strong>.</li>
+  <li>Post a webhook with a forged signature → expect <strong>401</strong>.</li>
+  <li>Request <code>/api/platform/schools</code> with a school token → expect <strong>404</strong>.</li>
+  <li>Trigger an error and confirm it appears in Sentry tagged <code>production</code>, with no email address, request body or IP in it.</li>
+  <li>Suspend the throwaway school from the platform console, confirm its login stops immediately, then cancel it.</li>
+</ul>
+
+<h2><span class="n">11</span>Day two</h2>
+<ul class="check">
+  <li>Set a Sentry alert for any new issue in <code>production</code>, routed somewhere a person reads.</li>
+  <li>Confirm the first automated database backup has actually run.</li>
+  <li>Rehearse a restore into a scratch database — a backup you have never restored is a hope.</li>
+  <li>Record who holds the Railway token, the Paystack live key and the platform owner login.</li>
+  <li>Diarise the JWT secret rotation. <span class="why">Changing it signs every user out; do it deliberately, not in an incident.</span></li>
+</ul>
+
+<footer>
+EduGear backend · A4 Technologies · This checklist reflects the repository at commit time.
+Full reference: README.md → “Deploying to Railway”.
+</footer>
+
+</body>
+</html>

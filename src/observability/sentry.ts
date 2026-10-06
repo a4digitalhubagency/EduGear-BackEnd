@@ -20,7 +20,7 @@ export function initSentry(env: EnvironmentVariables): boolean {
 
   Sentry.init({
     dsn: env.SENTRY_DSN,
-    environment: env.NODE_ENV,
+    environment: env.SENTRY_ENVIRONMENT ?? env.NODE_ENV,
     release: env.APP_VERSION,
     tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE,
     // `beforeSend` is the guarantee, not a convenience. Version 11 of the SDK

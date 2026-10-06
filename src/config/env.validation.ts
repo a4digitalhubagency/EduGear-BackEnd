@@ -253,6 +253,13 @@ export class EnvironmentVariables {
   @Transform(toFloat)
   SENTRY_TRACES_SAMPLE_RATE = 0.1;
 
+  /// Which deployment an error came from. Separate from NODE_ENV because staging
+  /// runs with NODE_ENV=production on purpose — so that it behaves like
+  /// production — and its errors must still not land in production's alerts.
+  @IsString()
+  @IsOptional()
+  SENTRY_ENVIRONMENT?: string;
+
   /// Ties an error to the commit that caused it. Railway exposes the deployed
   /// SHA, so this is set from it rather than maintained by hand.
   @IsString()

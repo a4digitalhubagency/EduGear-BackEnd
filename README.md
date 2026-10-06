@@ -398,6 +398,23 @@ Target stack: **Railway** (API + Redis) · **Neon** (Postgres) · **Cloudflare R
 
 ### Deploying to Railway
 
+**[docs/EduGear-Deployment-Checklist.pdf](docs/EduGear-Deployment-Checklist.pdf)** is the printable
+version of everything below, with the two-environment setup laid out step by step.
+
+**Two environments, one project.** `production` deploys from `main`, `staging` from `develop`, and
+each has its **own** Postgres and Redis — never shared, because staging is seeded with demo schools
+whose password is published in this file. Staging is what a front-end engineer builds against: it
+carries that demo data and serves Swagger at `/api/docs`.
+
+Staging runs `NODE_ENV=production` deliberately, so it behaves like production — Redis required, JSON
+logs, stack traces withheld, uploads needing real object storage. A staging environment that behaves
+differently from production tells you nothing. `SENTRY_ENVIRONMENT` is what keeps the two apart in
+alerting, and it exists precisely because `NODE_ENV` cannot do that job here.
+
+`npm run db:seed` **refuses to run against production**, checking both `NODE_ENV` and the shape of
+`DATABASE_URL`. That guard is there because `railway run` uses whichever environment the CLI happens
+to be linked to, and a wrong link looks exactly like a right one.
+
 [railway.json](railway.json) builds from the Dockerfile and sets three things
 that matter:
 
@@ -468,6 +485,7 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `PAYSTACK_SECRET_KEY` | Optional. Online payment is off until it is set |
 | `PAYSTACK_CALLBACK_URL` | Where Paystack returns the payer after checkout |
 | `SENTRY_DSN` | Optional, but set it in production |
+| `SENTRY_ENVIRONMENT` | `production` or `staging`; keeps their alerts apart |
 | `STORAGE_QUOTA_MB` | Default per-school upload ceiling (2048) |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a

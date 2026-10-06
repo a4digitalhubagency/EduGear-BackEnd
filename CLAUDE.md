@@ -259,6 +259,20 @@ every rule is explicit:
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
 
+### Environments
+
+`production` (from `main`) and `staging` (from `develop`) are separate Railway environments with
+separate databases. **Staging runs `NODE_ENV=production`** so it behaves like production, which means
+`isProduction` is true there too — so `SENTRY_ENVIRONMENT` exists to tell the two apart, and anything
+new that should differ between them needs its own variable rather than keying off `NODE_ENV`.
+
+`prisma/seed.ts` refuses to run when `NODE_ENV=production` or when `DATABASE_URL` looks like a
+production database. It creates demo schools with a published password, and the way it reaches
+production is `railway run` linked to the wrong environment. Keep that guard.
+
+The printable setup is [docs/EduGear-Deployment-Checklist.pdf](docs/EduGear-Deployment-Checklist.pdf),
+generated from `docs/deployment-checklist.html` with headless Chrome — edit the HTML, not the PDF.
+
 ### Error reporting
 
 Only 5xx reaches Sentry; a 403 is the application working.
