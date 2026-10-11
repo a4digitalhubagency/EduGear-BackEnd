@@ -40,7 +40,9 @@ and flush it in global setup. Rate-limit counters outlive a run (60s and 1h TTLs
 a second run inside the window fails — and flushing db 0 would wipe a developer's local cache.
 
 `test/global-setup.ts` runs `prisma migrate deploy` against `TEST_DATABASE_URL` once per e2e run, and
-[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database and raises throttle
+[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database, **deletes the
+`R2_*` and `SENTRY_DSN` variables** so a developer with real credentials in `.env` cannot have the
+suite write fixtures into a live bucket or file issues in the real Sentry project, and raises throttle
 limits — so most suites are unaffected by rate limiting, except
 [test/rate-limit.e2e-spec.ts](test/rate-limit.e2e-spec.ts), which sets its own limits before loading
 the app.

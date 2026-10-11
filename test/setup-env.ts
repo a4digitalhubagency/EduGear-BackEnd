@@ -34,6 +34,22 @@ process.env.STORAGE_LOCAL_DIR = path.join(
   process.env.TMPDIR ?? '/tmp',
   'edugear-test-storage',
 );
+// StorageService prefers R2 the moment all four of these are present, and a
+// developer with real credentials in .env would otherwise have the suite write
+// its ELF headers, fake JPEGs and multi-megabyte quota fixtures into a real
+// bucket. Same reasoning as forcing DATABASE_URL above: the tests get a
+// throwaway, never the live thing.
+for (const key of [
+  'R2_BUCKET',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_PUBLIC_URL',
+]) {
+  delete process.env[key];
+}
+// Likewise: a test run must never file issues in the real Sentry project.
+delete process.env.SENTRY_DSN;
 
 process.env.EMAIL_PROVIDER = 'console';
 // Rate limiting has a dedicated suite (rate-limit.e2e-spec.ts, which sets its own
