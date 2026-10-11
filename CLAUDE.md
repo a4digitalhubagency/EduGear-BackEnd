@@ -282,7 +282,12 @@ to precede the modules it watches — that is also why it reads the validated en
 object directly rather than through `ConfigService`.
 
 `scrub` rebuilds each event from a whitelist instead of deleting fields, so
-nothing a future integration attaches escapes by default. If you add a field to
+nothing a future integration attaches escapes by default. **Breadcrumbs are
+dropped wholesale** — `beforeBreadcrumb` returns null and `scrub` deletes any
+that arrive another way — because the SDK turns log lines into `console`
+breadcrumbs with the full text, and this application logs emails, references and
+request URLs. Do not re-enable them to "get more context": the context is in the
+Railway logs under the same `requestId`. If you add a field to
 it, you are deciding to send a school's data to a third party — `sentry.spec.ts`
 is where that decision gets argued with. Tag with ids (`requestId`, `schoolId`,
 `userId`), never names, emails or bodies.

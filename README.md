@@ -459,7 +459,20 @@ Debugging a school's problem does not involve shipping their data to a third
 party. [sentry.ts](src/observability/sentry.ts) rebuilds every event from a
 whitelist rather than editing it, so no request body, header, cookie, query
 string, IP address, email or hostname leaves the process — and an integration
-added later cannot quietly start sending more. What does go out is the error, the
+added later cannot quietly start sending more.
+
+**Breadcrumbs are dropped entirely.** The SDK turns every log line into a
+`console` breadcrumb carrying the full text, and this application logs school
+data: a guardian's email in `PlatformAdminService`, payment references, request
+URLs whose query string is somebody's name. Arbitrary log text cannot be
+scrubbed reliably, so none of it is sent. The trail is not lost — the same lines
+are in the Railway logs, correlated by the `requestId` tagged on the event, and
+those stay in our control.
+
+Stack frames do carry source context, which in a deployed image is the compiled
+`dist/*.js` — our own code, never runtime values. Local variable capture
+(`includeLocalVariables`) is off, so a frame holding a parent's email does not
+put it on the wire. Both were verified against a live DSN. What does go out is the error, the
 route *pattern* (`/students/:id`, so one broken endpoint is one issue rather than
 one per record), and the ids needed to find the request in our own logs. Those
 are opaque UUIDs; the names behind them stay in the database.

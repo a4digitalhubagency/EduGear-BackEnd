@@ -28,13 +28,15 @@ export function initSentry(env: EnvironmentVariables): boolean {
     // start attaching more than it does today — so what leaves this process is
     // decided by the whitelist in `scrub`, on every event.
     beforeSend: scrub,
-    beforeBreadcrumb: (breadcrumb) => {
-      // A breadcrumb for a query or an outgoing call can carry its parameters.
-      if (breadcrumb.category === 'query' || breadcrumb.category === 'http') {
-        return { ...breadcrumb, data: undefined };
-      }
-      return breadcrumb;
-    },
+    // Every breadcrumb is dropped. The SDK turns log output into `console`
+    // breadcrumbs carrying the full line, and this application logs school
+    // data — a guardian's email in PlatformAdminService, a payment reference,
+    // a request URL whose query string is somebody's name. Query and http
+    // breadcrumbs carry their parameters. There is no way to scrub arbitrary
+    // log text reliably, and the trail is not lost: the same lines are in the
+    // Railway logs, correlated by the requestId tagged on the event, and those
+    // stay in our control.
+    beforeBreadcrumb: () => null,
   });
 
   return true;
@@ -56,6 +58,10 @@ export function scrub(event: Sentry.ErrorEvent): Sentry.ErrorEvent | null {
   }
 
   delete event.server_name;
+  // `beforeBreadcrumb` already drops them at the source; this is the same
+  // guarantee enforced where every event passes, so a breadcrumb attached by
+  // some other route still never leaves.
+  delete event.breadcrumbs;
 
   if (event.user) {
     // An id is enough to find the request in our own logs. An email is not ours

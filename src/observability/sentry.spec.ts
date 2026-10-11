@@ -97,6 +97,32 @@ describe('Sentry event scrubbing', () => {
     expect(JSON.stringify(scrub(withNewField))).not.toContain('postgresql://');
   });
 
+  it('sends no breadcrumbs at all', () => {
+    // The SDK turns every log line into a `console` breadcrumb carrying the
+    // full text, and this application logs a guardian's email, payment
+    // references and request URLs whose query string is somebody's name. None
+    // of that is scrubbable, so none of it is sent.
+    const withTrail = event();
+    (withTrail as unknown as Record<string, unknown>).breadcrumbs = [
+      {
+        category: 'console',
+        level: 'warning',
+        message:
+          'Refused to attach a membership to platform account ops@a4.test',
+        data: { arguments: ['parent Ada Okafor owes 50000'] },
+      },
+      { category: 'http', data: { url: '/api/students?search=Adaeze' } },
+    ];
+
+    const scrubbed = scrub(withTrail);
+    expect(scrubbed?.breadcrumbs).toBeUndefined();
+
+    const serialised = JSON.stringify(scrubbed);
+    for (const leak of ['ops@a4.test', 'Ada Okafor', 'Adaeze']) {
+      expect(serialised).not.toContain(leak);
+    }
+  });
+
   it('survives an event with nothing attached', () => {
     expect(() => scrub({ event_id: 'x' } as ErrorEvent)).not.toThrow();
     const bare = scrub({ event_id: 'x' } as ErrorEvent);
