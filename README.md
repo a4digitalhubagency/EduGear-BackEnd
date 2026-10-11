@@ -461,6 +461,10 @@ the classic way migrations fail.
    the commit that caused it.
 5. In GitHub, add the `RAILWAY_TOKEN` secret and an `APP_URL` variable (plus
    `RAILWAY_SERVICE` if the service is not called `edugear-backend`).
+   `RAILWAY_TOKEN` must be a **project token scoped to the production
+   environment** — Railway → project → Settings → Tokens — not an account
+   token. A CI checkout has no `.railway` link, so an account token would not
+   know which project to deploy.
 6. First deploy, then create the platform owner:
    `railway run npm run platform:grant -- ops@a4technologies.ng OWNER --create`
 

@@ -43,10 +43,17 @@ jobs:
         # Railway runs preDeployCommand (prisma migrate deploy) from railway.json
         # before the new container takes traffic, so migrations are a release
         # step and never race between instances.
-        run: railway up --service "$RAILWAY_SERVICE" --ci
+        #
+        # RAILWAY_TOKEN must be a PROJECT token scoped to the production
+        # environment, not an account token: a fresh CI checkout has no
+        # .railway link, so an account token would have no idea what to deploy.
+        # --environment is passed anyway, so a mis-scoped token cannot quietly
+        # push main to staging.
+        run: railway up --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --ci
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'edugear-backend' }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_ENVIRONMENT || 'production' }}
 
       - name: Confirm the deployment is serving
         run: |
