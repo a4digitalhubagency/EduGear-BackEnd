@@ -431,6 +431,18 @@ CI completing successfully on `main` — Railway's own GitHub trigger deploys on
 push whether the tests passed or not, which is how a broken migration reaches
 production. It then polls `/api/health` until the new release answers.
 
+**Check a connection string before pointing an environment at it:**
+
+```bash
+DB_URL="postgresql://…" DB_DIRECT_URL="postgresql://…" npm run db:check
+```
+
+It reads the URLs from the environment rather than arguments, so they stay out
+of shell history, never writes anything, and never prints a password. It reports
+the Postgres version, whether the database is empty, and — the one that catches
+people on Neon — whether `DIRECT_URL` is accidentally the pooled host, which is
+the classic way migrations fail.
+
 **Setting it up**, once:
 
 1. Create the service and point it at this repository. Add **Postgres** and
