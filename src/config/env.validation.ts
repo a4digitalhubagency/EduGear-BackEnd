@@ -21,6 +21,13 @@ export enum NodeEnv {
   Production = 'production',
 }
 
+/** The deployment, as opposed to the Node mode. */
+export enum AppEnv {
+  Development = 'development',
+  Staging = 'staging',
+  Production = 'production',
+}
+
 export enum EmailProvider {
   /// Logs the email instead of sending it — the default for local development.
   Console = 'console',
@@ -253,12 +260,13 @@ export class EnvironmentVariables {
   @Transform(toFloat)
   SENTRY_TRACES_SAMPLE_RATE = 0.1;
 
-  /// Which deployment an error came from. Separate from NODE_ENV because staging
-  /// runs with NODE_ENV=production on purpose — so that it behaves like
-  /// production — and its errors must still not land in production's alerts.
-  @IsString()
+  /// Which deployment this is. Separate from NODE_ENV because staging runs with
+  /// NODE_ENV=production on purpose — so that it behaves like production — and
+  /// everything that must still tell the two apart keys off this instead:
+  /// Sentry's environment, and whether seeding is allowed.
+  @IsEnum(AppEnv)
   @IsOptional()
-  SENTRY_ENVIRONMENT?: string;
+  APP_ENV?: AppEnv;
 
   /// Ties an error to the commit that caused it. Railway exposes the deployed
   /// SHA, so this is set from it rather than maintained by hand.

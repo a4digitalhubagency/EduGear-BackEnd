@@ -176,47 +176,55 @@ async function seedSchool(input: {
 }
 
 /**
- * Refuses to touch anything that looks like production.
+ * Refuses to touch anything but a database that is meant to be thrown away.
  *
- * This seed creates demo schools whose password is published in the README. The
- * way it reaches production is not malice — it is `railway run npm run db:seed`
- * with the CLI linked to the wrong environment, which looks identical to the
- * right one. The check is on the database URL as well as NODE_ENV, because the
- * variable that is easiest to get wrong is the one naming the database.
+ * This seed creates demo schools whose password is published in the README, so
+ * the question is not "does this look like production" — that is a blocklist,
+ * and the first real connection string proved it useless: a Neon URL reads
+ * `…neon.tech/neondb`, which contains neither "prod" nor "live".
+ *
+ * So it is an allowlist instead. Seeding is permitted in exactly two places:
+ * a database on this machine, or a deployment that says it is staging. Anything
+ * else — a managed host from a laptop, a production deployment — is refused.
+ *
+ * NODE_ENV cannot be the discriminator, because staging deliberately runs with
+ * NODE_ENV=production so that it behaves like production. APP_ENV is what names
+ * the deployment.
  */
-function assertNotProduction(): void {
+function assertSeedable(): void {
   if (process.env.ALLOW_SEED_IN_PRODUCTION === 'yes-i-mean-it') {
-    console.warn('\n!! Seeding with the production guard overridden.\n');
+    console.warn('\n!! Seeding with the safety guard overridden.\n');
     return;
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'Refusing to seed: NODE_ENV=production. This creates demo schools with a ' +
-        'published password. If you are certain, set ' +
-        'ALLOW_SEED_IN_PRODUCTION=yes-i-mean-it.',
-    );
+  const raw = process.env.DATABASE_URL ?? '';
+  let host = '';
+  try {
+    host = new URL(raw).hostname;
+  } catch {
+    throw new Error('Refusing to seed: DATABASE_URL is missing or malformed.');
   }
 
-  const url = process.env.DATABASE_URL ?? '';
-  const looksProduction =
-    /prod|live/i.test(url) && !/test|staging|dev/i.test(url);
-  if (looksProduction) {
-    throw new Error(
-      `Refusing to seed: DATABASE_URL looks like a production database. ` +
-        'If you are certain, set ALLOW_SEED_IN_PRODUCTION=yes-i-mean-it.',
-    );
-  }
+  // The Docker service name counts as local: that is how CI reaches Postgres.
+  const LOCAL = ['localhost', '127.0.0.1', '::1', '0.0.0.0', 'postgres'];
+  const isLocal = LOCAL.includes(host) || host.endsWith('.local');
+  const isStaging = process.env.APP_ENV === 'staging';
+
+  if (isLocal || isStaging) return;
+
+  throw new Error(
+    `Refusing to seed ${host}: it is neither a database on this machine nor a ` +
+      'deployment that says APP_ENV=staging. This seed creates demo schools ' +
+      'with a published password. If you are certain, set ' +
+      'ALLOW_SEED_IN_PRODUCTION=yes-i-mean-it.',
+  );
 }
 
 async function main(): Promise<void> {
-  assertNotProduction();
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'Refusing to run the demo seed against a production database',
-    );
-  }
+  // The only guard. An earlier NODE_ENV===production check lived here and was
+  // removed: staging sets NODE_ENV=production deliberately, so it blocked the
+  // one deployment that is supposed to be seedable.
+  assertSeedable();
 
   await syncPermissions();
 

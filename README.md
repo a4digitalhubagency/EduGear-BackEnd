@@ -408,12 +408,17 @@ carries that demo data and serves Swagger at `/api/docs`.
 
 Staging runs `NODE_ENV=production` deliberately, so it behaves like production — Redis required, JSON
 logs, stack traces withheld, uploads needing real object storage. A staging environment that behaves
-differently from production tells you nothing. `SENTRY_ENVIRONMENT` is what keeps the two apart in
-alerting, and it exists precisely because `NODE_ENV` cannot do that job here.
+differently from production tells you nothing. **`APP_ENV` is what names the deployment**, and it
+exists precisely because `NODE_ENV` cannot: it drives Sentry's environment tag and decides whether
+the demo seed may run. Anything else that must differ between staging and production belongs there
+too, never on `NODE_ENV`.
 
-`npm run db:seed` **refuses to run against production**, checking both `NODE_ENV` and the shape of
-`DATABASE_URL`. That guard is there because `railway run` uses whichever environment the CLI happens
-to be linked to, and a wrong link looks exactly like a right one.
+`npm run db:seed` is **allowed in exactly two places**: a database on your own machine, or a
+deployment that says `APP_ENV=staging`. Anything else is refused. It is an allowlist rather than a
+"does this look like production" check, because the first real connection string proved that useless
+— a Neon URL reads `…neon.tech/neondb`, which contains neither "prod" nor "live". The guard matters
+because `railway run` uses whichever environment the CLI happens to be linked to, and a wrong link
+looks exactly like a right one.
 
 [railway.json](railway.json) builds from the Dockerfile and sets three things
 that matter:
@@ -510,7 +515,7 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `PAYSTACK_SECRET_KEY` | Optional. Online payment is off until it is set |
 | `PAYSTACK_CALLBACK_URL` | Where Paystack returns the payer after checkout |
 | `SENTRY_DSN` | Optional, but set it in production |
-| `SENTRY_ENVIRONMENT` | `production` or `staging`; keeps their alerts apart |
+| `APP_ENV` | `production` or `staging`; names the deployment (see below) |
 | `STORAGE_QUOTA_MB` | Default per-school upload ceiling (2048) |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a

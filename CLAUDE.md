@@ -264,13 +264,16 @@ every rule is explicit:
 ### Environments
 
 `production` (from `main`) and `staging` (from `develop`) are separate Railway environments with
-separate databases. **Staging runs `NODE_ENV=production`** so it behaves like production, which means
-`isProduction` is true there too — so `SENTRY_ENVIRONMENT` exists to tell the two apart, and anything
-new that should differ between them needs its own variable rather than keying off `NODE_ENV`.
+separate databases. **Staging runs `NODE_ENV=production`** so it behaves like production, which means `isProduction` is
+true there too. **`APP_ENV` (`development | staging | production`) is what names the deployment** —
+use it, never `NODE_ENV`, for anything that must differ between staging and production. It currently
+drives Sentry's environment tag and the seed guard. Two bugs came from getting this wrong once, so
+it is worth the care.
 
-`prisma/seed.ts` refuses to run when `NODE_ENV=production` or when `DATABASE_URL` looks like a
-production database. It creates demo schools with a published password, and the way it reaches
-production is `railway run` linked to the wrong environment. Keep that guard.
+`prisma/seed.ts` allows seeding in exactly two places: a database on the developer's own machine, or
+a deployment with `APP_ENV=staging`. It is an **allowlist** — an earlier version asked "does this URL
+look like production", and the first real Neon URL (`…neon.tech/neondb`) matched neither "prod" nor
+"live", so it would have seeded demo schools with a published password straight into production.
 
 The printable setup is [docs/EduGear-Deployment-Checklist.pdf](docs/EduGear-Deployment-Checklist.pdf),
 generated from `docs/deployment-checklist.html` with headless Chrome — edit the HTML, not the PDF.
