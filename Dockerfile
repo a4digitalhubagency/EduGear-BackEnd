@@ -10,7 +10,10 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-RUN npm ci
+# npm retries twice by default with a short ceiling, so one blip between the
+# builder and the registry fails the whole deploy. Five tries with a longer
+# backoff costs nothing on a good day.
+RUN npm ci --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 FROM node:22-alpine AS build
 WORKDIR /app
