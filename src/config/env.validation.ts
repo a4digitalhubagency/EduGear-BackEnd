@@ -212,10 +212,6 @@ export class EnvironmentVariables {
   @IsOptional()
   R2_BUCKET?: string;
 
-  @IsString()
-  @IsOptional()
-  R2_PUBLIC_URL?: string;
-
   /// Paystack secret key. Online payments are off until it is set.
   @IsString()
   @IsOptional()

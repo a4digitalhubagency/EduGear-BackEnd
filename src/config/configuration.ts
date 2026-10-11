@@ -68,7 +68,6 @@ export interface AppConfig {
     accessKeyId?: string;
     secretAccessKey?: string;
     bucket?: string;
-    publicUrl?: string;
     localDir: string;
     /** Per-school default; School.storageQuotaMb overrides it. */
     quotaMb: number;
@@ -135,7 +134,6 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
       accessKeyId: env.R2_ACCESS_KEY_ID,
       secretAccessKey: env.R2_SECRET_ACCESS_KEY,
       bucket: env.R2_BUCKET,
-      publicUrl: env.R2_PUBLIC_URL,
       localDir: env.STORAGE_LOCAL_DIR,
       quotaMb: env.STORAGE_QUOTA_MB,
     },
