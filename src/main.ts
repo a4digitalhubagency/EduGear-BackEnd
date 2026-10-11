@@ -1,9 +1,31 @@
 // Before every other import: instrumentation has to be in place before the
 // modules it watches are loaded.
 import { initSentry } from './observability/sentry';
-import { validateEnv } from './config/env.validation';
+import { EnvironmentConfigError, validateEnv } from './config/env.validation';
 
-const sentryEnabled = initSentry(validateEnv(process.env));
+/**
+ * Misconfiguration is the normal way a first deploy fails, so it gets a clean
+ * exit rather than an unhandled throw: a deploy log should open with the list
+ * of variables to fix, not with a stack frame in a compiled file.
+ */
+function readEnvOrExit(): ReturnType<typeof validateEnv> {
+  try {
+    return validateEnv(process.env);
+  } catch (error) {
+    if (error instanceof EnvironmentConfigError) {
+      process.stderr.write(
+        `\nEduGear cannot start: ${error.problems.length} configuration ` +
+          `problem${error.problems.length === 1 ? '' : 's'}.\n\n` +
+          error.problems.map((p) => `  - ${p}\n`).join('') +
+          `\nSet these and deploy again. Full list: .env.example\n\n`,
+      );
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+const sentryEnabled = initSentry(readEnvOrExit());
 
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';

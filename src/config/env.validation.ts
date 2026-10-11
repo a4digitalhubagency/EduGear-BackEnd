@@ -275,6 +275,14 @@ export class EnvironmentVariables {
   APP_VERSION?: string;
 }
 
+/**
+ * Validates the environment and reports **everything** that is wrong at once.
+ *
+ * This used to throw at the first problem, which meant a deploy told you about
+ * DATABASE_URL, and only after you fixed it and waited for another build did it
+ * mention REDIS_URL. Four sequential checks meant up to four deploy cycles to
+ * learn what a single pass already knew.
+ */
 export function validateEnv(
   raw: Record<string, unknown>,
 ): EnvironmentVariables {
@@ -283,43 +291,57 @@ export function validateEnv(
     exposeDefaultValues: true,
   });
 
-  const errors = validateSync(config, {
+  const problems = validateSync(config, {
     skipMissingProperties: false,
     whitelist: false,
-  });
-
-  if (errors.length > 0) {
-    const details = errors
-      .map(
-        (e) =>
-          `  - ${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`,
-      )
-      .join('\n');
-    throw new Error(`Invalid environment configuration:\n${details}`);
-  }
+  }).map(
+    (e) => `${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`,
+  );
 
   if (
     config.EMAIL_PROVIDER === EmailProvider.Resend &&
     !config.RESEND_API_KEY
   ) {
-    throw new Error('EMAIL_PROVIDER=resend requires RESEND_API_KEY to be set');
+    problems.push('RESEND_API_KEY: required when EMAIL_PROVIDER=resend');
   }
 
+  // Evaluated even when the checks above failed, so one pass reports the lot.
+  // Each guard tolerates a missing value, because that is already reported.
   if (config.NODE_ENV === NodeEnv.Production) {
-    if (config.CORS_ORIGINS.trim() === '*') {
-      throw new Error('CORS_ORIGINS=* is not allowed in production');
+    if (config.CORS_ORIGINS?.trim() === '*') {
+      problems.push('CORS_ORIGINS: "*" is not allowed in production');
     }
-    if (config.JWT_ACCESS_SECRET.includes('replace-me')) {
-      throw new Error('JWT_ACCESS_SECRET still holds the placeholder value');
+    if (config.JWT_ACCESS_SECRET?.includes('replace-me')) {
+      problems.push('JWT_ACCESS_SECRET: still holds the placeholder value');
     }
     if (!config.REDIS_URL) {
-      throw new Error(
-        'REDIS_URL is required in production: without it, rate limiting and the ' +
-          'permission cache are per-instance, so a second instance would silently ' +
-          'weaken both.',
+      problems.push(
+        'REDIS_URL: required in production — without it, rate limiting and the ' +
+          'permission cache are per-instance, so a second instance would ' +
+          'silently weaken both',
       );
     }
   }
 
+  if (problems.length > 0) {
+    throw new EnvironmentConfigError(problems);
+  }
+
   return config;
+}
+
+/**
+ * Carries the whole list so the entry point can print it without a stack trace.
+ * A deploy log should lead with what to fix, not with a frame from a compiled
+ * file nobody is going to open.
+ */
+export class EnvironmentConfigError extends Error {
+  constructor(readonly problems: string[]) {
+    super(
+      `Invalid environment configuration:\n${problems
+        .map((p) => `  - ${p}`)
+        .join('\n')}`,
+    );
+    this.name = 'EnvironmentConfigError';
+  }
 }

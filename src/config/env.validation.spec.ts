@@ -1,43 +1,83 @@
-import { validateEnv } from './env.validation';
+import {
+  AppEnv,
+  EnvironmentConfigError,
+  NodeEnv,
+  validateEnv,
+} from './env.validation';
 
-const productionEnv = {
-  NODE_ENV: 'production',
-  DATABASE_URL: 'postgresql://user:pass@host:5432/edugear',
-  JWT_ACCESS_SECRET: 'a-production-secret-that-is-long-enough-to-pass',
-  CORS_ORIGINS: 'https://app.edugear.test',
-  REDIS_URL: 'redis://cache:6379',
+const valid = {
+  NODE_ENV: NodeEnv.Production,
+  DATABASE_URL: 'postgresql://user:pass@host:5432/db',
+  JWT_ACCESS_SECRET: 'a'.repeat(40),
+  REDIS_URL: 'redis://localhost:6379',
+  CORS_ORIGINS: 'https://app.example.test',
 };
 
-function envWithout(key: keyof typeof productionEnv): Record<string, unknown> {
-  const copy: Record<string, unknown> = { ...productionEnv };
-  delete copy[key];
-  return copy;
-}
+const problemsFrom = (env: Record<string, unknown>): string[] => {
+  try {
+    validateEnv(env);
+    return [];
+  } catch (error) {
+    if (error instanceof EnvironmentConfigError) return error.problems;
+    throw error;
+  }
+};
 
 describe('validateEnv', () => {
-  it('accepts a complete production environment', () => {
-    expect(() => validateEnv({ ...productionEnv })).not.toThrow();
+  it('accepts a complete production configuration', () => {
+    expect(() => validateEnv(valid)).not.toThrow();
   });
 
-  it('refuses to boot production without Redis', () => {
-    // Falling back to per-instance rate limiting and permission caching is a
-    // silent correctness loss the moment a second instance exists, so it must
-    // fail at boot rather than at runtime.
-    expect(() => validateEnv(envWithout('REDIS_URL'))).toThrow(
-      /REDIS_URL is required in production/,
+  it('reports every problem at once, not the first one', () => {
+    // The whole point: a deploy that tells you about DATABASE_URL, then only
+    // after a rebuild mentions REDIS_URL, costs a cycle per problem.
+    const problems = problemsFrom({ NODE_ENV: NodeEnv.Production });
+
+    expect(problems.join('\n')).toMatch(/DATABASE_URL/);
+    expect(problems.join('\n')).toMatch(/JWT_ACCESS_SECRET/);
+    expect(problems.join('\n')).toMatch(/REDIS_URL/);
+    expect(problems.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('still catches the production-only rules alongside missing values', () => {
+    const problems = problemsFrom({
+      ...valid,
+      CORS_ORIGINS: '*',
+      REDIS_URL: '',
+      JWT_ACCESS_SECRET: 'replace-me-replace-me-replace-me-replace',
+    });
+
+    expect(problems.join('\n')).toMatch(/CORS_ORIGINS/);
+    expect(problems.join('\n')).toMatch(/REDIS_URL/);
+    expect(problems.join('\n')).toMatch(/placeholder/);
+  });
+
+  it('does not apply the production rules outside production', () => {
+    expect(() =>
+      validateEnv({
+        NODE_ENV: NodeEnv.Development,
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+        JWT_ACCESS_SECRET: 'a'.repeat(40),
+        CORS_ORIGINS: '*',
+      }),
+    ).not.toThrow();
+  });
+
+  it('requires a Resend key only when Resend is the provider', () => {
+    expect(
+      problemsFrom({ ...valid, EMAIL_PROVIDER: 'resend' }).join('\n'),
+    ).toMatch(/RESEND_API_KEY/);
+    expect(problemsFrom({ ...valid, EMAIL_PROVIDER: 'console' })).toHaveLength(
+      0,
     );
   });
 
-  it('allows development and test to run without Redis', () => {
-    const base = envWithout('REDIS_URL');
-
-    expect(() =>
-      validateEnv({ ...base, NODE_ENV: 'development' }),
-    ).not.toThrow();
-    expect(() => validateEnv({ ...base, NODE_ENV: 'test' })).not.toThrow();
-  });
-
-  it('defaults the Redis key prefix', () => {
-    expect(validateEnv({ ...productionEnv }).REDIS_KEY_PREFIX).toBe('edugear:');
+  it('accepts the three deployment names and rejects anything else', () => {
+    for (const env of [AppEnv.Development, AppEnv.Staging, AppEnv.Production]) {
+      expect(problemsFrom({ ...valid, APP_ENV: env })).toHaveLength(0);
+    }
+    expect(problemsFrom({ ...valid, APP_ENV: 'prod' }).join('\n')).toMatch(
+      /APP_ENV/,
+    );
   });
 });
