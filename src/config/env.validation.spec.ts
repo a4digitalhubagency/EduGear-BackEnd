@@ -72,6 +72,32 @@ describe('validateEnv', () => {
     );
   });
 
+  it('refuses to send real email to localhost links', () => {
+    // The day EMAIL_PROVIDER flips to resend is the day FRONTEND_URL has to be
+    // real, or parents get invitation links pointing at their own machine.
+    const problems = problemsFrom({
+      ...valid,
+      EMAIL_PROVIDER: 'resend',
+      RESEND_API_KEY: 're_test_key',
+      FRONTEND_URL: 'http://localhost:5173',
+    });
+    expect(problems.join('\n')).toMatch(/FRONTEND_URL/);
+
+    expect(
+      problemsFrom({
+        ...valid,
+        EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test_key',
+        FRONTEND_URL: 'https://app.edugear.ng',
+      }),
+    ).toHaveLength(0);
+
+    // Console email is for environments with no front end, so it stays allowed.
+    expect(
+      problemsFrom({ ...valid, FRONTEND_URL: 'http://localhost:5173' }),
+    ).toHaveLength(0);
+  });
+
   it('accepts the three deployment names and rejects anything else', () => {
     for (const env of [AppEnv.Development, AppEnv.Staging, AppEnv.Production]) {
       expect(problemsFrom({ ...valid, APP_ENV: env })).toHaveLength(0);

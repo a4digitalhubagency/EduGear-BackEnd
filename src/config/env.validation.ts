@@ -298,11 +298,22 @@ export function validateEnv(
     (e) => `${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`,
   );
 
-  if (
-    config.EMAIL_PROVIDER === EmailProvider.Resend &&
-    !config.RESEND_API_KEY
-  ) {
-    problems.push('RESEND_API_KEY: required when EMAIL_PROVIDER=resend');
+  if (config.EMAIL_PROVIDER === EmailProvider.Resend) {
+    if (!config.RESEND_API_KEY) {
+      problems.push('RESEND_API_KEY: required when EMAIL_PROVIDER=resend');
+    }
+    // Invitation, verification and reset emails are built as
+    // `${FRONTEND_URL}/accept-invitation?token=…`. Sending those for real while
+    // FRONTEND_URL is still the development default means posting a parent a
+    // link to their own machine.
+    if (
+      /^https?:\/\/(localhost|127\.0\.0\.1)/i.test(config.FRONTEND_URL ?? '')
+    ) {
+      problems.push(
+        'FRONTEND_URL: still points at localhost while EMAIL_PROVIDER=resend — ' +
+          'every invitation and password-reset link would be unusable',
+      );
+    }
   }
 
   // Evaluated even when the checks above failed, so one pass reports the lot.
