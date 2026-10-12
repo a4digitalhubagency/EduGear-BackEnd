@@ -271,7 +271,10 @@ drives Sentry's environment tag and the seed guard. Two bugs came from getting t
 it is worth the care.
 
 `prisma/seed.ts` allows seeding in exactly two places: a database on the developer's own machine, or
-a deployment with `APP_ENV=staging`. It is an **allowlist** — an earlier version asked "does this URL
+a run with `APP_ENV=staging`. It always runs **from a developer machine**, never inside a deployed
+container — the seed goes through `ts-node` (`prisma.config.ts`), which `npm prune --omit=dev`
+removes from the image — and it reaches staging over Postgres's **public** URL, because
+`railway run` executes locally and `postgres.railway.internal` only resolves inside Railway. It is an **allowlist** — an earlier version asked "does this URL
 look like production", and the first real Neon URL (`…neon.tech/neondb`) matched neither "prod" nor
 "live", so it would have seeded demo schools with a published password straight into production.
 

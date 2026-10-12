@@ -413,12 +413,22 @@ exists precisely because `NODE_ENV` cannot: it drives Sentry's environment tag a
 the demo seed may run. Anything else that must differ between staging and production belongs there
 too, never on `NODE_ENV`.
 
-`npm run db:seed` is **allowed in exactly two places**: a database on your own machine, or a
-deployment that says `APP_ENV=staging`. Anything else is refused. It is an allowlist rather than a
-"does this look like production" check, because the first real connection string proved that useless
-— a Neon URL reads `…neon.tech/neondb`, which contains neither "prod" nor "live". The guard matters
-because `railway run` uses whichever environment the CLI happens to be linked to, and a wrong link
-looks exactly like a right one.
+**Seeding staging** runs from a developer machine, over Postgres's public proxy:
+
+```bash
+# Railway → staging → the Postgres service → Variables → DATABASE_PUBLIC_URL
+DATABASE_URL="<staging DATABASE_PUBLIC_URL>" APP_ENV=staging npm run db:seed
+```
+
+Not `railway run npm run db:seed`. That runs the command **locally** with the environment's
+variables, so `DATABASE_URL` arrives as `postgres.railway.internal` — a host only resolvable from
+inside Railway. Nor can it run inside the container: the seed goes through `ts-node`
+([prisma.config.ts](prisma.config.ts)), a devDependency the production image prunes.
+
+`npm run db:seed` is **allowed in exactly two places**: a database on your own machine, or a run that
+says `APP_ENV=staging`. Anything else is refused. It is an allowlist rather than a "does this look
+like production" check, because the first real connection string proved that useless — a Neon URL
+reads `…neon.tech/neondb`, which contains neither "prod" nor "live".
 
 [railway.json](railway.json) builds from the Dockerfile and sets three things
 that matter:

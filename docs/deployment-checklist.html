@@ -187,8 +187,15 @@ production alerts.
 </ul>
 
 <h2><span class="n">7</span>Seed staging for the frontend engineer</h2>
-<pre>railway environment staging
-railway run npm run db:seed</pre>
+<pre># Railway → staging → Postgres service → Variables → DATABASE_PUBLIC_URL
+DATABASE_URL="&lt;staging DATABASE_PUBLIC_URL&gt;" APP_ENV=staging npm run db:seed</pre>
+<div class="warn">
+<strong>Not <code>railway run npm run db:seed</code>.</strong> That runs the command
+<em>locally</em> with the environment's variables, so <code>DATABASE_URL</code> arrives as
+<code>postgres.railway.internal</code> — resolvable only from inside Railway. It cannot run inside
+the container either: the seed goes through <code>ts-node</code>, a devDependency the production
+image prunes. So it runs from a developer machine, over the public proxy.
+</div>
 <ul class="check">
   <li>Run the seed <strong>against staging only</strong>. It creates two demo schools — two tenants, so cross-tenant mistakes show up immediately.</li>
   <li>Give the FE engineer: the staging base URL, <code>/api/docs</code>, and the demo logins. Password: <code>Demo9Access2026</code></li>
@@ -203,10 +210,9 @@ environment the CLI is linked to, and a wrong link looks exactly like a right on
 </div>
 
 <h3>Resetting staging</h3>
-<pre>railway environment staging
-railway status            # confirm it says staging, not production
-railway run npx prisma migrate reset --force
-railway run npm run db:seed</pre>
+<pre>DB="&lt;staging DATABASE_PUBLIC_URL&gt;"
+DATABASE_URL="$DB" DIRECT_URL="$DB" npx prisma migrate reset --force
+DATABASE_URL="$DB" APP_ENV=staging npm run db:seed</pre>
 
 <h2><span class="n">8</span>Create the platform owner (production)</h2>
 <pre>railway environment production
