@@ -5,7 +5,9 @@ import {
   HealthCheckService,
   HealthIndicatorResult,
 } from '@nestjs/terminus';
+import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../cache/redis.service';
+import { AppConfig } from '../config/configuration';
 import { Public } from '../common/decorators';
 import { RequestContext } from '../common/context/request-context';
 import { InjectPrisma } from '../database/prisma.tokens';
@@ -18,6 +20,7 @@ export class HealthController {
     private readonly health: HealthCheckService,
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly redis: RedisService,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
   @Get()
@@ -34,11 +37,29 @@ export class HealthController {
     return this.health.check(indicators);
   }
 
+  /**
+   * Liveness, plus which build is answering.
+   *
+   * "Is the deployment actually running the commit I pushed?" is otherwise a
+   * question you can only put to a dashboard, and a dashboard showing a build
+   * id next to a commit sha is easy to misread. The running process knows,
+   * so it says.
+   *
+   * The sha is of a private repository, so publishing it gives away nothing
+   * actionable — and being able to confirm what is deployed, from outside,
+   * without credentials, is worth more than withholding it.
+   */
   @Get('live')
   @Public()
   @ApiExcludeEndpoint()
   live() {
-    return { status: 'ok', uptime: process.uptime() };
+    const app = this.config.get('app', { infer: true });
+    return {
+      status: 'ok',
+      uptime: Math.round(process.uptime()),
+      environment: process.env.APP_ENV ?? app.env,
+      version: process.env.APP_VERSION ?? 'unset',
+    };
   }
 
   private async checkRedis(): Promise<HealthIndicatorResult> {
