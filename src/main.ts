@@ -25,7 +25,8 @@ function readEnvOrExit(): ReturnType<typeof validateEnv> {
   }
 }
 
-const sentryEnabled = initSentry(readEnvOrExit());
+const env = readEnvOrExit();
+const sentryEnabled = initSentry(env);
 
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
@@ -36,6 +37,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 import { applyHttpSettings } from './http-settings';
+import { QuietBootLogger } from './observability/quiet-boot-logger';
 import { flushSentry } from './observability/sentry';
 
 async function bootstrap(): Promise<void> {
@@ -45,7 +47,11 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService<AppConfig, true>);
   const appConfig = config.get('app', { infer: true });
 
-  app.useLogger(app.get(Logger));
+  // Nest's start-up narration is 236 of the 247 lines this logs at boot. Past a
+  // platform's log rate limit the overflow is dropped, taking any crash with
+  // it, so production keeps the 11 that mean something.
+  const logger = app.get(Logger);
+  app.useLogger(appConfig.isProduction ? new QuietBootLogger(logger) : logger);
   app.flushLogs();
 
   applyHttpSettings(app, appConfig.apiPrefix);
