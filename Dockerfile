@@ -1,6 +1,16 @@
 # ---------------------------------------------------------------------------
-# Production image. Multi-stage so the runtime layer carries no build toolchain.
-# Works as-is on Railway / Fly / Render / Cloud Run.
+# Production image. Multi-stage so the runtime layer carries no build
+# toolchain and no development dependencies.
+#
+# Two things matter for size, and both are easy to get wrong:
+#
+#   * Layers are additive. `npm prune` in the runtime stage does not remove
+#     anything — it writes a second copy of what is left. So the pruning
+#     happens in its own stage and only the result is copied forward.
+#   * `chown -R` rewrites every file it touches, which duplicates the entire
+#     tree in a new layer. `COPY --chown` sets ownership as files land instead.
+#
+# Getting those wrong cost 1.3GB.
 # ---------------------------------------------------------------------------
 
 FROM node:22-alpine AS deps
@@ -24,19 +34,29 @@ RUN npx prisma generate && npm run build
 # image whose only symptom is "Cannot find module '/app/dist/main'" at boot.
 RUN test -f dist/main.js || (echo 'Build produced no dist/main.js' >&2 && exit 1)
 
+# Dependencies as the runtime actually needs them. The full install and the
+# prune both happen here, so the intermediate bulk never reaches the image.
+FROM node:22-alpine AS runtime-deps
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+COPY --from=deps /app/node_modules ./node_modules
+# Prune first, then generate: pruning drops the Prisma CLI along with the other
+# dev dependencies, and would take the generated client with it.
+RUN npm prune --omit=dev && npx prisma generate
+
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache tini && addgroup -S app && adduser -S app -G app
 
-COPY package*.json ./
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-
-# Drop dev dependencies but keep the generated Prisma client.
-RUN npm prune --omit=dev && npx prisma generate && chown -R app:app /app
+COPY --chown=app:app package*.json ./
+COPY --chown=app:app prisma ./prisma
+COPY --chown=app:app prisma.config.ts ./
+COPY --from=runtime-deps --chown=app:app /app/node_modules ./node_modules
+COPY --from=build --chown=app:app /app/dist ./dist
 
 USER app
 EXPOSE 3000
