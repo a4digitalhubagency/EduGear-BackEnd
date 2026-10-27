@@ -13,6 +13,12 @@ import { RequestContext } from '../common/context/request-context';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 
+/** A 40-character sha is unreadable; seven is what git shows and what people compare. */
+function shortSha(value: string | undefined): string {
+  const trimmed = value?.trim() ?? '';
+  return /^[0-9a-f]{40}$/i.test(trimmed) ? trimmed.slice(0, 7) : trimmed;
+}
+
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
@@ -60,7 +66,10 @@ export class HealthController {
       // `||`, not `??`: an unresolved platform reference arrives as an empty
       // string, which is not nullish and would be reported as a version.
       environment: process.env.APP_ENV || app.env,
-      version: process.env.APP_VERSION || 'unset',
+      // Shortened here so APP_VERSION can hold the full sha, which is what
+      // Sentry wants for a release, while this stays comparable by eye with
+      // `git log --oneline`.
+      version: shortSha(process.env.APP_VERSION) || 'unset',
     };
   }
 
