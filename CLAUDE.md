@@ -6,6 +6,11 @@ EduGear is a multi-tenant school management SaaS backend (NestJS 11 + Prisma 6 +
 [README.md](README.md) documents the domain, the full endpoint table, the auth flows and deployment;
 this file covers what you need to change code safely.
 
+## Commit messages
+
+**No `Co-Authored-By` trailer, and no tool attribution of any kind.** The repository's contributor
+list is for people. Write the message as the project's own voice: what changed and why it mattered.
+
 ## Commands
 
 ```bash
