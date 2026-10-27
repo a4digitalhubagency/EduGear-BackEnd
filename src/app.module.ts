@@ -145,7 +145,13 @@ import { UsersModule } from './users/users.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    // Runs before guards, so the JWT strategy can attach the tenant to this context.
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
+    // Runs before guards, so the JWT strategy can attach the tenant to this
+    // context. `'{*path}'` rather than the older `'*'`: path-to-regexp v8 no
+    // longer accepts a bare wildcard, and Nest only auto-converts it while
+    // printing a deprecation warning. This middleware opens the AsyncLocalStorage
+    // store the tenant guard reads, so the day that shim is removed every
+    // tenant-scoped query would throw TenantContextMissingError — closed rather
+    // than leaky, but an outage all the same.
+    consumer.apply(RequestContextMiddleware).forRoutes('{*path}');
   }
 }
