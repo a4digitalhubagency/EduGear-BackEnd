@@ -72,6 +72,13 @@ async function seedSchool(input: {
     type: argon2.argon2id,
   });
 
+  // One school is roughly twenty round trips inside a single transaction: the
+  // school, six roles with their permissions, then a user and a membership per
+  // member of staff. Prisma's 5s default assumes a database on the same
+  // network; seeding staging goes over a tunnel, where twenty round trips are
+  // comfortably more than that. The work is small — only the distance is large.
+  const TRANSACTION_OPTIONS = { timeout: 120_000, maxWait: 30_000 };
+
   await prisma.$transaction(async (tx) => {
     const school = await tx.school.create({
       data: {
@@ -170,7 +177,7 @@ async function seedSchool(input: {
         ],
       });
     }
-  });
+  }, TRANSACTION_OPTIONS);
 
   console.log(`✓ ${input.name} seeded`);
 }
