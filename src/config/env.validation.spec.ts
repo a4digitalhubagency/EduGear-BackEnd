@@ -72,6 +72,34 @@ describe('validateEnv', () => {
     );
   });
 
+  it('catches a connection string that still carries its own key name', () => {
+    // Exactly what a KEY=value block pasted into a dashboard value field looks
+    // like. It is a non-empty string, so every other check passes, and it fails
+    // at connect time instead — Redis quietly, leaving production cacheless.
+    const problems = problemsFrom({
+      ...valid,
+      REDIS_URL: 'REDIS_URL=redis://localhost:6379',
+    });
+    expect(problems.join('\n')).toMatch(/paste the connection string only/);
+
+    expect(
+      problemsFrom({
+        ...valid,
+        DATABASE_URL: 'DATABASE_URL=postgresql://user:pass@host:5432/db',
+      }).join('\n'),
+    ).toMatch(/DATABASE_URL/);
+  });
+
+  it('rejects a connection string with the wrong scheme', () => {
+    expect(
+      problemsFrom({ ...valid, REDIS_URL: 'http://localhost:6379' }).join('\n'),
+    ).toMatch(/must start with redis:\/\/ or rediss:\/\//);
+    // rediss:// is TLS and must stay acceptable.
+    expect(
+      problemsFrom({ ...valid, REDIS_URL: 'rediss://host:6379' }),
+    ).toHaveLength(0);
+  });
+
   it('refuses to send real email to localhost links', () => {
     // The day EMAIL_PROVIDER flips to resend is the day FRONTEND_URL has to be
     // real, or parents get invitation links pointing at their own machine.

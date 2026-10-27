@@ -294,6 +294,27 @@ export function validateEnv(
     (e) => `${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`,
   );
 
+  // A connection string whose value still carries its own key name — the shape
+  // you get from pasting a KEY=value block into a dashboard's value field —
+  // passes every check above, because it is a perfectly good non-empty string.
+  // It then fails at connect time: Redis as a log line and a silently
+  // cacheless production, Postgres as a crash much later. Catch the shape.
+  for (const [key, value, schemes] of [
+    ['DATABASE_URL', config.DATABASE_URL, ['postgresql://', 'postgres://']],
+    ['DIRECT_URL', config.DIRECT_URL, ['postgresql://', 'postgres://']],
+    ['REDIS_URL', config.REDIS_URL, ['redis://', 'rediss://']],
+  ] as const) {
+    if (!value) continue;
+    if (!schemes.some((scheme) => value.startsWith(scheme))) {
+      const looksPasted = value.startsWith(`${key}=`);
+      problems.push(
+        looksPasted
+          ? `${key}: the value starts with "${key}=" — paste the connection string only, not the whole line`
+          : `${key}: must start with ${schemes.join(' or ')}`,
+      );
+    }
+  }
+
   if (config.EMAIL_PROVIDER === EmailProvider.Resend) {
     if (!config.RESEND_API_KEY) {
       problems.push('RESEND_API_KEY: required when EMAIL_PROVIDER=resend');
