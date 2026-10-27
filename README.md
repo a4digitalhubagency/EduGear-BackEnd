@@ -541,6 +541,7 @@ Full list with defaults in [.env.example](.env.example). Required in every envir
 | `PAYSTACK_CALLBACK_URL` | Where Paystack returns the payer after checkout |
 | `SENTRY_DSN` | Optional, but set it in production |
 | `APP_ENV` | `production` or `staging`; names the deployment (see below) |
+| `SWAGGER_ENABLED` | Defaults to **false** in production — set `true` only on staging |
 | `STORAGE_QUOTA_MB` | Default per-school upload ceiling (2048) |
 
 Boot fails fast with a readable message if configuration is invalid — no request ever discovers a

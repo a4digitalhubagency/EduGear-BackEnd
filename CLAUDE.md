@@ -123,7 +123,9 @@ are **copied into each school** at provisioning so a school can retune its own r
 - `AuditService.record()` never throws; a failed audit write must not roll back the business operation.
   Add new action names to [src/audit/audit-actions.ts](src/audit/audit-actions.ts).
 - Config is read through `ConfigService` against the typed tree in [src/config/](src/config/), validated
-  at boot. The one sanctioned exception is
+  at boot. **Defaults are chosen so that a forgotten variable fails safe**: `SWAGGER_ENABLED` is
+  `true` for development but resolves to `false` under `NODE_ENV=production` unless set explicitly,
+  because a missing variable once published the whole API surface on the live service. The one sanctioned exception is
   [src/common/constants/throttle.ts](src/common/constants/throttle.ts), which reads `process.env`
   directly because `@Throttle()` decorators evaluate before DI exists.
 - **Redis is required in production** and optional everywhere else. `RedisService.client` is `null`

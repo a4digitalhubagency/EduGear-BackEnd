@@ -100,6 +100,29 @@ describe('validateEnv', () => {
     ).toHaveLength(0);
   });
 
+  it('keeps Swagger off in production unless asked for explicitly', () => {
+    // A forgotten variable published the entire API surface — every endpoint,
+    // every DTO, every validation rule — on the live service.
+    expect(validateEnv(valid).SWAGGER_ENABLED).toBe(false);
+
+    // An explicit value still wins, in either direction.
+    expect(
+      validateEnv({ ...valid, SWAGGER_ENABLED: 'true' }).SWAGGER_ENABLED,
+    ).toBe(true);
+    expect(
+      validateEnv({ ...valid, SWAGGER_ENABLED: 'false' }).SWAGGER_ENABLED,
+    ).toBe(false);
+
+    // Development is unaffected: docs on by default is the point there.
+    expect(
+      validateEnv({
+        NODE_ENV: NodeEnv.Development,
+        DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+        JWT_ACCESS_SECRET: 'a'.repeat(40),
+      }).SWAGGER_ENABLED,
+    ).toBe(true);
+  });
+
   it('refuses to send real email to localhost links', () => {
     // The day EMAIL_PROVIDER flips to resend is the day FRONTEND_URL has to be
     // real, or parents get invitation links pointing at their own machine.

@@ -57,8 +57,10 @@ export class HealthController {
     return {
       status: 'ok',
       uptime: Math.round(process.uptime()),
-      environment: process.env.APP_ENV ?? app.env,
-      version: process.env.APP_VERSION ?? 'unset',
+      // `||`, not `??`: an unresolved platform reference arrives as an empty
+      // string, which is not nullish and would be reported as a version.
+      environment: process.env.APP_ENV || app.env,
+      version: process.env.APP_VERSION || 'unset',
     };
   }
 

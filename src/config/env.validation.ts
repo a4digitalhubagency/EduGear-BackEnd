@@ -351,6 +351,16 @@ export function validateEnv(
     }
   }
 
+  // Swagger defaults to on, which is right for development and wrong for
+  // production: a forgotten variable should not publish the whole API surface.
+  // Only an explicit value turns it on there.
+  if (
+    config.NODE_ENV === NodeEnv.Production &&
+    raw.SWAGGER_ENABLED === undefined
+  ) {
+    config.SWAGGER_ENABLED = false;
+  }
+
   if (problems.length > 0) {
     throw new EnvironmentConfigError(problems);
   }
