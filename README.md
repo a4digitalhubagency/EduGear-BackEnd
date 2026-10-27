@@ -452,22 +452,15 @@ that matter:
 - `restartPolicyType: ON_FAILURE` with 3 retries, so a crash loop stops instead
   of hammering the database.
 
-Deployment is gated on CI. [deploy.yml](.github/workflows/deploy.yml) triggers on
-CI completing successfully on `main` — Railway's own GitHub trigger deploys on
-push whether the tests passed or not, which is how a broken migration reaches
-production. It then polls `/api/health` until the new release answers.
+Deployment is **Railway's own GitHub trigger with "Wait for CI" enabled** — a push to `main` deploys
+only after CI goes green. Without that toggle Railway deploys on push regardless of whether the tests
+passed, which is how a broken migration reaches production.
 
-**Check a connection string before pointing an environment at it:**
-
-```bash
-DB_URL="postgresql://…" DB_DIRECT_URL="postgresql://…" npm run db:check
-```
-
-It reads the URLs from the environment rather than arguments, so they stay out
-of shell history, never writes anything, and never prints a password. It reports
-the Postgres version, whether the database is empty, and — the one that catches
-people on Neon — whether `DIRECT_URL` is accidentally the pooled host, which is
-the classic way migrations fail.
+There is no deploy workflow, deliberately. Railway's healthcheck already refuses to complete a deploy
+the application cannot serve, which is most of what a CI-driven deploy would add; and keeping deploys
+git-sourced is what populates `RAILWAY_GIT_COMMIT_SHA_SHORT`, and therefore `APP_VERSION` and
+Sentry's release tag. Deploying with `railway up` from CI uploads a directory snapshot rather than a
+commit, and leaves both empty.
 
 **Setting it up**, once:
 
@@ -480,12 +473,10 @@ the classic way migrations fail.
 3. Generate `JWT_ACCESS_SECRET` with `openssl rand -base64 48`.
 4. Set `APP_VERSION` to `${{RAILWAY_GIT_COMMIT_SHA}}` so an error in Sentry names
    the commit that caused it.
-5. In GitHub, add the `RAILWAY_TOKEN` secret and an `APP_URL` variable (plus
-   `RAILWAY_SERVICE` if the service is not called `edugear-backend`).
-   `RAILWAY_TOKEN` must be a **project token scoped to the production
-   environment** — Railway → project → Settings → Tokens — not an account
-   token. A CI checkout has no `.railway` link, so an account token would not
-   know which project to deploy.
+5. On each environment, Settings → Deploy: set the **Pre-deploy Command** to
+   `npx prisma migrate deploy` and the **Healthcheck Path** to `/api/health`.
+   On production, enable **Wait for CI** on the GitHub trigger. Do not assume
+   `railway.json` supplies these — verify the fields are populated.
 6. First deploy, then create the platform owner:
    `railway run npm run platform:grant -- ops@a4technologies.ng OWNER --create`
 

@@ -168,12 +168,11 @@ production alerts.
 
 <h2><span class="n">5</span>Wire up deployment from CI</h2>
 <ul class="check">
-  <li>Railway → Account Settings → Tokens → create a token. Add it to GitHub as the secret <code>RAILWAY_TOKEN</code>.</li>
-  <li>GitHub → Settings → Variables → add <code>APP_URL</code> (your production API URL).</li>
-  <li>Add <code>RAILWAY_SERVICE</code> only if your service is not called <code>edugear-backend</code>.</li>
-  <li>In Railway, <strong>turn off</strong> the automatic GitHub deploy trigger for <code>production</code>.
-    <span class="why">It fires on push whether the tests passed or not. deploy.yml waits for CI to go green first — that is the whole point.</span></li>
-  <li>Leave the automatic trigger <strong>on</strong> for <code>staging</code>, so the FE engineer always has the latest <code>develop</code>.</li>
+  <li>Service → Settings → Deploy → <strong>Pre-deploy Command</strong>: <code>npx prisma migrate deploy</code>. <span class="why">Do not assume railway.json provides it — check the field is populated, on both environments.</span></li>
+  <li>Service → Settings → Deploy → <strong>Healthcheck Path</strong>: <code>/api/health</code>. <span class="why">Without it Railway reports a deploy successful when the container merely started, not when the app works.</span></li>
+  <li>Service → Settings → Deploy → <strong>Restart Policy</strong>: On Failure, 3 retries.</li>
+  <li>On <code>production</code>, enable <strong>Wait for CI</strong> on the GitHub trigger. <span class="why">Without it Railway deploys on push whether the tests passed or not.</span></li>
+  <li>Leave the trigger <strong>on</strong> for <code>staging</code>, so the FE engineer always has the latest <code>develop</code>.</li>
 </ul>
 
 <h2><span class="n">6</span>First deploy</h2>

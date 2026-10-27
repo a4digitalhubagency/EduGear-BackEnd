@@ -55,7 +55,11 @@ context once made tsc skip emitting while `deleteOutDir` had already emptied `di
 shipped with no `dist/main.js`. It is git-ignored, so a fresh CI checkout never reproduced it. The
 Dockerfile now also asserts `dist/main.js` exists before the runtime stage.
 
-[deploy.yml](.github/workflows/deploy.yml) deploys to Railway only after CI is green on `main`.
+Deployment is Railway's own GitHub trigger with **Wait for CI** enabled, so a push to `main` deploys
+only once CI is green. There is deliberately no deploy workflow: Railway's healthcheck already
+refuses to complete a deploy the app cannot serve, and keeping deploys git-sourced is what populates
+`RAILWAY_GIT_COMMIT_SHA_SHORT`, and so `APP_VERSION` and Sentry's release tag. `railway up` from CI
+would upload a directory snapshot instead and leave both empty.
 
 ## Tenant isolation — the invariant everything else protects
 
