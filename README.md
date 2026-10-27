@@ -430,6 +430,17 @@ says `APP_ENV=staging`. Anything else is refused. It is an allowlist rather than
 like production" check, because the first real connection string proved that useless — a Neon URL
 reads `…neon.tech/neondb`, which contains neither "prod" nor "live".
 
+> **Check the dashboard actually has these.** `railway.json` is valid, committed
+> and at the repo root, and Railway still did not read it on the first service —
+> **Settings → Deploy** showed no pre-deploy step and no healthcheck path. The
+> consequences were quiet and serious: migrations never ran, so production sat on
+> an empty database, and with no healthcheck Railway reported every deploy as
+> successful because it was only checking that the container started. If those
+> two fields are empty, set them by hand:
+>
+> - Pre-deploy step: `npx prisma migrate deploy`
+> - Healthcheck Path: `/api/health`
+
 [railway.json](railway.json) builds from the Dockerfile and sets three things
 that matter:
 

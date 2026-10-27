@@ -133,7 +133,9 @@ are **copied into each school** at provisioning so a school can retune its own r
 - Redis failures must not break requests: cache reads fall through to the database, writes are logged.
   A failed *invalidation* is logged at error level because it leaves stale permissions until the TTL.
 - Migrations: `prisma migrate deploy` as a release step — [railway.json](railway.json)'s
-  `preDeployCommand`, never on container boot; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+  `preDeployCommand`, never on container boot. **Verify Railway's dashboard actually has it**:
+  the file was ignored on the first service, so migrations silently never ran and, with the
+  healthcheck also unset, every broken deploy still reported success; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
