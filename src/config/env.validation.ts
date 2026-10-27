@@ -264,8 +264,8 @@ export class EnvironmentVariables {
   @IsOptional()
   APP_ENV?: AppEnv;
 
-  /// Ties an error to the commit that caused it. Railway exposes the deployed
-  /// SHA, so this is set from it rather than maintained by hand.
+  /// Ties an error to the commit that caused it. Usually left unset: the
+  /// platform's own build variable is picked up automatically below.
   @IsString()
   @IsOptional()
   APP_VERSION?: string;
@@ -349,6 +349,20 @@ export function validateEnv(
           'silently weaken both',
       );
     }
+  }
+
+  // The deployed commit, without anyone having to configure it. Railway injects
+  // RAILWAY_GIT_COMMIT_SHA into the container, but its `${{…}}` reference syntax
+  // addresses other services' variables, not the platform's own runtime ones —
+  // so `APP_VERSION=${{RAILWAY_GIT_COMMIT_SHA}}` silently expands to nothing.
+  // Reading it here means one place knows about the platform, and everything
+  // downstream just reads APP_VERSION.
+  if (!config.APP_VERSION?.trim()) {
+    const fromPlatform =
+      asString(raw.RAILWAY_GIT_COMMIT_SHA) ??
+      asString(raw.VERCEL_GIT_COMMIT_SHA) ??
+      asString(raw.GITHUB_SHA);
+    if (fromPlatform?.trim()) config.APP_VERSION = fromPlatform.trim();
   }
 
   // Swagger defaults to on, which is right for development and wrong for

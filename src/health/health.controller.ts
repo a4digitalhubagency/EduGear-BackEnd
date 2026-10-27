@@ -59,17 +59,17 @@ export class HealthController {
   @Public()
   @ApiExcludeEndpoint()
   live() {
+    // Read through config, not process.env: validateEnv is where APP_VERSION
+    // falls back to the platform's own build variable, and that resolution has
+    // to be the one thing anybody reads.
     const app = this.config.get('app', { infer: true });
     return {
       status: 'ok',
       uptime: Math.round(process.uptime()),
-      // `||`, not `??`: an unresolved platform reference arrives as an empty
-      // string, which is not nullish and would be reported as a version.
-      environment: process.env.APP_ENV || app.env,
-      // Shortened here so APP_VERSION can hold the full sha, which is what
-      // Sentry wants for a release, while this stays comparable by eye with
-      // `git log --oneline`.
-      version: shortSha(process.env.APP_VERSION) || 'unset',
+      environment: app.deployment,
+      // Shortened here so the stored value can stay the full sha, which is what
+      // Sentry wants for a release, while this reads like `git log --oneline`.
+      version: shortSha(app.version) || 'unset',
     };
   }
 

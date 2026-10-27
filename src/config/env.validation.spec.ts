@@ -100,6 +100,35 @@ describe('validateEnv', () => {
     ).toHaveLength(0);
   });
 
+  it('picks up the deployed commit from the platform when APP_VERSION is unset', () => {
+    // Railway injects RAILWAY_GIT_COMMIT_SHA into the container, but its
+    // ${{…}} reference syntax addresses other services' variables, not the
+    // platform's own — so APP_VERSION=${{RAILWAY_GIT_COMMIT_SHA}} expands to
+    // nothing and every Sentry error went out with no release.
+    const sha = 'bc1ca25a3656ef9db15c30398fc0cb588d2e4c75';
+    expect(
+      validateEnv({ ...valid, RAILWAY_GIT_COMMIT_SHA: sha }).APP_VERSION,
+    ).toBe(sha);
+
+    // An explicit value still wins.
+    expect(
+      validateEnv({
+        ...valid,
+        APP_VERSION: 'v2.0.0',
+        RAILWAY_GIT_COMMIT_SHA: sha,
+      }).APP_VERSION,
+    ).toBe('v2.0.0');
+
+    // An unresolved reference is empty, which must not count as explicit.
+    expect(
+      validateEnv({ ...valid, APP_VERSION: '', RAILWAY_GIT_COMMIT_SHA: sha })
+        .APP_VERSION,
+    ).toBe(sha);
+
+    // Nothing anywhere stays undefined rather than inventing a version.
+    expect(validateEnv(valid).APP_VERSION).toBeUndefined();
+  });
+
   it('keeps Swagger off in production unless asked for explicitly', () => {
     // A forgotten variable published the entire API surface — every endpoint,
     // every DTO, every validation rule — on the live service.

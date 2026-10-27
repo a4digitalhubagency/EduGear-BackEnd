@@ -294,6 +294,15 @@ look like production", and the first real Neon URL (`…neon.tech/neondb`) match
 The printable setup is [docs/EduGear-Deployment-Checklist.pdf](docs/EduGear-Deployment-Checklist.pdf),
 generated from `docs/deployment-checklist.html` with headless Chrome — edit the HTML, not the PDF.
 
+### The deployed commit
+
+`APP_VERSION` is normally left unset. Railway injects `RAILWAY_GIT_COMMIT_SHA` into the container,
+but its `${{…}}` reference syntax addresses *other services'* variables, not the platform's own
+runtime ones — so `APP_VERSION=${{RAILWAY_GIT_COMMIT_SHA}}` expands silently to an empty string, and
+every Sentry error went out with no release attached. `validateEnv` reads the platform variable
+directly when `APP_VERSION` is blank, so that resolution happens once and everything downstream reads
+`app.version`. Never read `process.env.APP_VERSION` elsewhere; the fallback would be invisible to it.
+
 ### Error reporting
 
 Only 5xx reaches Sentry; a 403 is the application working.

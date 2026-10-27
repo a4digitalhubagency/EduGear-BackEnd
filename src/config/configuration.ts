@@ -23,6 +23,10 @@ export interface AppConfig {
     corsOrigins: string[];
     logLevel: string;
     swaggerEnabled: boolean;
+    /** The deployed commit; resolved from the platform when not set by hand. */
+    version?: string;
+    /** development | staging | production — names the deployment, not the Node mode. */
+    deployment: string;
   };
   database: {
     url: string;
@@ -90,6 +94,8 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
         .filter(Boolean),
       logLevel: env.LOG_LEVEL,
       swaggerEnabled: env.SWAGGER_ENABLED,
+      version: env.APP_VERSION,
+      deployment: env.APP_ENV ?? env.NODE_ENV,
     },
     database: {
       url: env.DATABASE_URL,
