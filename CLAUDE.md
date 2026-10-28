@@ -97,7 +97,19 @@ Rules that follow:
 ## Request pipeline
 
 `RequestContextMiddleware` (opens the ALS store) → `ThrottlerGuard` → `JwtAuthGuard` →
-`PermissionsGuard`. All three guards are global in [app.module.ts](src/app.module.ts); order matters.
+`PermissionsGuard`. All three guards are global in [app.module.ts](src/app.module.ts); order matters:
+rate limiting runs before authentication so an unauthenticated flood never costs a JWT verify and a
+lookup. That is also why the throttle tracker cannot key on the signed-in user — nobody is signed in
+yet — and why **who a budget belongs to** is decided in
+[client-ip.ts](src/common/guards/client-ip.ts) instead.
+
+The web app calls this API from its own server, so every request shares one socket address and the
+whole estate would share one budget. `X-Forwarded-For` cannot fix that: the API is reachable
+directly, so trusting a hop further back would let anyone mint a budget per request. Instead the
+front end sends `X-Client-Ip` with `X-Edge-Secret` matching `TRUSTED_PROXY_SECRET` (timing-safe
+compare), and only then is the address believed. **No secret, a wrong secret, or a value that is not
+an address falls back to the socket address** — narrower, never wider. Keys are namespaced
+(`fwd:` / `ip:`) so a direct caller cannot spend a real user's budget by claiming their address.
 
 Route metadata comes from [src/common/decorators/index.ts](src/common/decorators/index.ts):
 `@Public()`, `@RequirePermissions(...)`, `@AllowNoTenant()`, `@CurrentUser()`, `@CurrentSchool()`.

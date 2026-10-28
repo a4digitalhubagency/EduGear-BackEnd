@@ -52,6 +52,8 @@ export interface AppConfig {
     limit: number;
     authTtlSeconds: number;
     authLimit: number;
+    /** Absent means the client-IP header is ignored; see client-ip.ts. */
+    trustedProxySecret?: string;
   };
   redis: {
     /** Absent means "run single-instance": in-process throttling and permission cache. */
@@ -121,6 +123,7 @@ export function buildConfig(env: EnvironmentVariables): AppConfig {
       limit: env.THROTTLE_LIMIT,
       authTtlSeconds: env.AUTH_THROTTLE_TTL_SECONDS,
       authLimit: env.AUTH_THROTTLE_LIMIT,
+      trustedProxySecret: env.TRUSTED_PROXY_SECRET,
     },
     redis: {
       url: env.REDIS_URL,

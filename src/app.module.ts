@@ -19,6 +19,11 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import {
+  CLIENT_IP_HEADER,
+  EDGE_SECRET_HEADER,
+  resolveTracker,
+} from './common/guards/client-ip';
 import { RequestContext } from './common/context/request-context';
 import { AppConfigModule } from './config/config.module';
 import { AppConfig } from './config/configuration';
@@ -34,6 +39,12 @@ import { PortalModule } from './portal/portal.module';
 import { ResultsModule } from './results/results.module';
 import { StudentsModule } from './students/students.module';
 import { UsersModule } from './users/users.module';
+
+/** Node lower-cases header names; a repeated header arrives as an array. */
+function headerOf(req: Record<string, unknown>, name: string): unknown {
+  const headers = req.headers as Record<string, unknown> | undefined;
+  return headers?.[name];
+}
 
 @Module({
   imports: [
@@ -97,6 +108,17 @@ import { UsersModule } from './users/users.module';
           throttlers: [
             { ttl: throttle.ttlSeconds * 1000, limit: throttle.limit },
           ],
+          // Every request from the web app shares one socket address, so
+          // without this the whole estate shares one budget. The header is
+          // believed only when it comes with the shared secret; otherwise this
+          // falls back to the socket address. See client-ip.ts.
+          getTracker: (req: Record<string, unknown>) =>
+            resolveTracker({
+              clientIp: headerOf(req, CLIENT_IP_HEADER),
+              edgeSecret: headerOf(req, EDGE_SECRET_HEADER),
+              socketIp: typeof req.ip === 'string' ? req.ip : undefined,
+              configuredSecret: throttle.trustedProxySecret,
+            }),
           // Shared storage means one budget across every instance. Without Redis
           // the default in-memory storage applies, i.e. a per-instance budget —
           // production refuses to boot in that state.
