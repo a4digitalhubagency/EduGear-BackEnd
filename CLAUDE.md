@@ -270,7 +270,13 @@ every rule is explicit:
   school-wide cache key, and adding one to the hot path is not worth it for
   something this rare.
 - The platform admin snapshot is **deliberately not cached**: revocation has to
-  bite on the next request, and there are only a handful of rows.
+  bite on the next request, and there are only a handful of rows. That is also
+  what makes `POST /platform/auth/change-password` work — it bumps
+  `tokenVersion`, and the strategy's platform branch compares it every request,
+  so the operator's other sessions die at once. The school route cannot serve
+  this: it resolves an `AuthContext` a platform session has none of, so the
+  guard answers 403 before the handler runs. **Anything new that both scopes
+  need gets two routes, not one route that branches.**
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
 

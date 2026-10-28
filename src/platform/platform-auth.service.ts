@@ -13,6 +13,7 @@ import { AppConfig } from '../config/configuration';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { PlatformAdminService } from './platform-admin.service';
+import { ChangePasswordDto } from '../auth/dto/auth.dto';
 import { PlatformLoginDto } from './dto/platform.dto';
 
 /** Cost of a real verify, spent on a miss so timing does not reveal the account. */
@@ -160,6 +161,63 @@ export class PlatformAuthService {
 
   async logout(refreshToken: string): Promise<void> {
     await this.tokens.revokeRefreshToken(refreshToken);
+  }
+
+  /**
+   * An operator changing their own password.
+   *
+   * `/auth/change-password` cannot serve this: it resolves an `AuthContext`,
+   * which a platform session has none of, so the permissions guard turns a
+   * platform token away with 403 before the handler runs. Rather than teach
+   * that route about two kinds of caller, the platform surface keeps its own —
+   * the same reason the two logins are separate doors.
+   *
+   * Bumping `tokenVersion` is what revokes the sessions: the strategy's
+   * platform branch compares it on every request, and the admin snapshot is
+   * deliberately uncached, so the operator's other sessions die on their next
+   * call rather than when a cache expires.
+   */
+  async changePassword(dto: ChangePasswordDto): Promise<void> {
+    const platform = RequestContext.getPlatform();
+    if (!platform) throw AppException.unauthorized();
+
+    this.passwords.assertMeetsPolicy(dto.newPassword);
+
+    const user = await RequestContext.runAsSystem(() =>
+      this.prisma.user.findUnique({ where: { id: platform.userId } }),
+    );
+    if (!user) throw AppException.unauthorized();
+
+    const valid = await this.passwords.verify(
+      user.passwordHash,
+      dto.currentPassword,
+    );
+    if (!valid) {
+      throw AppException.unauthorized(
+        'Current password is incorrect',
+        ErrorCode.INVALID_CREDENTIALS,
+      );
+    }
+
+    const passwordHash = await this.passwords.hash(dto.newPassword);
+    await RequestContext.runAsSystem(() =>
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash, tokenVersion: { increment: 1 } },
+      }),
+    );
+
+    await this.tokens.revokeAllForUser(user.id);
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.PLATFORM_PASSWORD_CHANGED,
+      entityType: 'PlatformAdmin',
+      entityId: platform.platformAdminId,
+      description: `${user.email} changed their platform password`,
+      schoolId: null,
+      actorUserId: user.id,
+      membershipId: null,
+    });
   }
 
   // ---------------------------------------------------------------------------
