@@ -352,7 +352,19 @@ role only, because no member of staff holds it.
 ### Settings
 
 [school-settings.service.ts](src/tenants/school-settings.service.ts) — an absent row means defaults,
-and reads never write one. Anything new that reads a setting should degrade to the default rather
+and reads never write one.
+
+**Inside a term is not the same as a school day.** A term runs straight through
+the weekends it contains, so a term lookup alone once accepted a register for a
+Sunday. The school's own week lives in
+[school-days.ts](src/tenants/school-days.ts) as a 7-bit mask (a scalar column, so
+"did this change" stays `!==`; an array would compare references), default
+Monday–Friday, and `normaliseMask` refuses an empty week because a school with
+no open day could never take a register again. The API speaks in day names and
+the column stores the mask — keep the mask out of DTOs and out of audit
+descriptions. This deliberately does **not** model one irregular day: a make-up
+Saturday or a mid-term holiday needs a per-date calendar, which is a larger
+feature than a weekly pattern. Anything new that reads a setting should degrade to the default rather
 than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
 [admission-number.ts](src/students/admission-number.ts) and
 [receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.

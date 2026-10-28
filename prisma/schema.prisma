@@ -1076,6 +1076,10 @@ model SchoolSettings {
   /// Default days to pay when a fee structure sets no due date.
   invoiceDueDays       Int?
 
+  /// Which weekdays the school opens, as a 7-bit mask (bit 0 is Sunday).
+  /// 62 is Monday-Friday. A register is refused on any day not set here.
+  schoolDaysMask       Int     @default(62)
+
   /// Some schools deliberately do not rank children.
   reportShowPosition   Boolean @default(true)
   /// Class highest, lowest and average beside each subject.

@@ -1,7 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   Matches,
@@ -9,9 +13,18 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { WEEKDAYS, Weekday } from '../school-days';
 
 const upper = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toUpperCase() : value;
+
+/** Same leniency as `upper`, for a list: "monday " is still Monday. */
+const upperEach = ({ value }: { value: unknown }): unknown =>
+  Array.isArray(value)
+    ? (value as unknown[]).map((day) =>
+        typeof day === 'string' ? day.trim().toUpperCase() : day,
+      )
+    : value;
 
 export class UpdateSchoolSettingsDto {
   @ApiPropertyOptional({
@@ -77,6 +90,23 @@ export class UpdateSchoolSettingsDto {
   @IsBoolean()
   @IsOptional()
   reportShowClassStats?: boolean;
+
+  @ApiPropertyOptional({
+    isArray: true,
+    enum: WEEKDAYS,
+    example: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'],
+    description:
+      'The days this school opens. A register is refused on any other day. ' +
+      'At least one day is required — a school with none could never take a ' +
+      'register again.',
+  })
+  @Transform(upperEach)
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsIn(WEEKDAYS, { each: true })
+  @IsOptional()
+  schoolDays?: Weekday[];
 }
 
 export class SchoolSettingsDto {
@@ -91,4 +121,6 @@ export class SchoolSettingsDto {
   @ApiPropertyOptional({ nullable: true }) invoiceDueDays: number | null;
   @ApiProperty() reportShowPosition: boolean;
   @ApiProperty() reportShowClassStats: boolean;
+  @ApiProperty({ isArray: true, enum: WEEKDAYS })
+  schoolDays: Weekday[];
 }
