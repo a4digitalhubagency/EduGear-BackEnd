@@ -28,6 +28,33 @@ describe('validateEnv', () => {
     expect(() => validateEnv(valid)).not.toThrow();
   });
 
+  describe('TRUSTED_PROXY_SECRET', () => {
+    it('is optional', () => {
+      expect(problemsFrom(valid)).toHaveLength(0);
+    });
+
+    it('treats a variable set to nothing as unset', () => {
+      // How `VAR=` in a copied .env.example arrives. Refusing to boot on it
+      // would make the safe choice — not using the header — the broken one.
+      const config = validateEnv({ ...valid, TRUSTED_PROXY_SECRET: '   ' });
+      expect(config.TRUSTED_PROXY_SECRET).toBeUndefined();
+    });
+
+    it('refuses a secret short enough to guess', () => {
+      expect(
+        problemsFrom({ ...valid, TRUSTED_PROXY_SECRET: 'tooshort' }).join('\n'),
+      ).toMatch(/TRUSTED_PROXY_SECRET/);
+    });
+
+    it('accepts a long one, trimmed', () => {
+      const config = validateEnv({
+        ...valid,
+        TRUSTED_PROXY_SECRET: ` ${'s'.repeat(40)} `,
+      });
+      expect(config.TRUSTED_PROXY_SECRET).toBe('s'.repeat(40));
+    });
+  });
+
   it('reports every problem at once, not the first one', () => {
     // The whole point: a deploy that tells you about DATABASE_URL, then only
     // after a rebuild mentions REDIS_URL, costs a cycle per problem.

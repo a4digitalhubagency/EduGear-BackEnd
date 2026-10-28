@@ -92,6 +92,8 @@ describe('Attendance', () => {
   });
 
   beforeEach(async () => {
+    // The school week is a setting, and one test below widens it.
+    await ctx.db.schoolSettings.deleteMany({});
     await ctx.db.attendanceRecord.deleteMany({});
     await ctx.db.student.deleteMany({});
     await ctx.db.classArm.deleteMany({});
@@ -235,6 +237,78 @@ describe('Attendance', () => {
       'PRESENT',
     ]).expect(400);
     expect(response.body.message).toMatch(/not inside any term/);
+  });
+
+  // A term runs straight through the weekends inside it, so "inside a term"
+  // accepted a Sunday register until the school's own week was consulted.
+  it('refuses a Sunday that falls inside a term', async () => {
+    const response = await take(formTeacher.token, '2025-10-12', [
+      'PRESENT',
+      'PRESENT',
+      'PRESENT',
+    ]).expect(400);
+    expect(response.body.message).toMatch(/Sunday is not a school day/);
+    expect(await ctx.db.attendanceRecord.count()).toBe(0);
+  });
+
+  it('refuses a Saturday that falls inside a term', async () => {
+    const response = await take(formTeacher.token, '2025-10-11', [
+      'PRESENT',
+      'PRESENT',
+      'PRESENT',
+    ]).expect(400);
+    expect(response.body.message).toMatch(/Saturday is not a school day/);
+  });
+
+  it('accepts a Saturday once the school says it opens on one', async () => {
+    await ctx
+      .http()
+      .patch('/api/schools/me/settings')
+      .set(head())
+      .send({
+        schoolDays: [
+          'MONDAY',
+          'TUESDAY',
+          'WEDNESDAY',
+          'THURSDAY',
+          'FRIDAY',
+          'SATURDAY',
+        ],
+      })
+      .expect(200);
+
+    await take(formTeacher.token, '2025-10-11', [
+      'PRESENT',
+      'PRESENT',
+      'PRESENT',
+    ]).expect(200);
+
+    // Opening on Saturday says nothing about Sunday.
+    await take(formTeacher.token, '2025-10-12', [
+      'PRESENT',
+      'PRESENT',
+      'PRESENT',
+    ]).expect(400);
+  });
+
+  it('tells the register screen a weekend cannot be edited', async () => {
+    const response = await ctx
+      .http()
+      .get(`/api/attendance/register?classArmId=${armA}&date=2025-10-12`)
+      .set(bearer(formTeacher.token))
+      .expect(200);
+    // The term is named, so the day is inside one — canEdit is what differs.
+    expect(response.body.termName).toBe('FIRST');
+    expect(response.body.canEdit).toBe(false);
+  });
+
+  it('refuses a week with no days at all', async () => {
+    await ctx
+      .http()
+      .patch('/api/schools/me/settings')
+      .set(head())
+      .send({ schoolDays: [] })
+      .expect(400);
   });
 
   it('refuses a student from another arm', async () => {

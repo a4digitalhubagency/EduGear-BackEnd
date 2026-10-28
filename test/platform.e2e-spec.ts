@@ -140,6 +140,99 @@ describe('Platform console', () => {
   });
 
   // -------------------------------------------------------------------------
+  // An operator's own password
+  // -------------------------------------------------------------------------
+
+  const NEW_PASSWORD = 'PlatformPass456';
+
+  it('lets an operator change their own password', async () => {
+    const token = await platformLogin('pw@a4.test', PlatformRole.OPERATOR);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/change-password')
+      .set(bearer(token))
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(200);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/login')
+      .send({ email: 'pw@a4.test', password: PASSWORD })
+      .expect(401);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/login')
+      .send({ email: 'pw@a4.test', password: NEW_PASSWORD })
+      .expect(200);
+  });
+
+  it('kills the sessions that were open when the password changed', async () => {
+    const token = await platformLogin('pw2@a4.test', PlatformRole.OWNER);
+    await ctx.http().get('/api/platform/me').set(bearer(token)).expect(200);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/change-password')
+      .set(bearer(token))
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(200);
+
+    // The token version moved, and the admin snapshot is not cached, so the
+    // token that performed the change is dead on its very next request.
+    await ctx.http().get('/api/platform/me').set(bearer(token)).expect(401);
+  });
+
+  it('refuses a wrong current password, and changes nothing', async () => {
+    const token = await platformLogin('pw3@a4.test', PlatformRole.SUPPORT);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/change-password')
+      .set(bearer(token))
+      .send({ currentPassword: 'NotMyPassword1', newPassword: NEW_PASSWORD })
+      .expect(401);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/login')
+      .send({ email: 'pw3@a4.test', password: PASSWORD })
+      .expect(200);
+  });
+
+  it('holds a new platform password to the same policy as any other', async () => {
+    const token = await platformLogin('pw4@a4.test', PlatformRole.OWNER);
+
+    await ctx
+      .http()
+      .post('/api/platform/auth/change-password')
+      .set(bearer(token))
+      .send({ currentPassword: PASSWORD, newPassword: 'short' })
+      .expect(400);
+  });
+
+  it('keeps the route inside the platform scope', async () => {
+    // A school token may not even learn that this route exists...
+    await ctx
+      .http()
+      .post('/api/platform/auth/change-password')
+      .set(bearer(school.accessToken))
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(404);
+
+    // ...and the school route is still shut to a platform token, which is the
+    // whole reason this one exists.
+    const token = await platformLogin('pw5@a4.test', PlatformRole.OWNER);
+    await ctx
+      .http()
+      .post('/api/auth/change-password')
+      .set(bearer(token))
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(403);
+  });
+
+  // -------------------------------------------------------------------------
   // Roles within the console
   // -------------------------------------------------------------------------
 

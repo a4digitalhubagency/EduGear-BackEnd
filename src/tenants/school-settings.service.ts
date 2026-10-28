@@ -3,6 +3,12 @@ import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { formatAdmissionNumber } from '../students/admission-number';
+import {
+  DEFAULT_SCHOOL_DAYS_MASK,
+  daysFromMask,
+  maskFromDays,
+  normaliseMask,
+} from './school-days';
 import { SchoolSettingsDto, UpdateSchoolSettingsDto } from './dto/settings.dto';
 
 export interface SchoolSettings {
@@ -13,6 +19,8 @@ export interface SchoolSettings {
   invoiceDueDays: number | null;
   reportShowPosition: boolean;
   reportShowClassStats: boolean;
+  /** Seven-bit weekday mask; see school-days.ts. */
+  schoolDaysMask: number;
 }
 
 /** What a school gets before it changes anything. */
@@ -24,6 +32,7 @@ export const DEFAULT_SETTINGS: SchoolSettings = {
   invoiceDueDays: null,
   reportShowPosition: true,
   reportShowClassStats: true,
+  schoolDaysMask: DEFAULT_SCHOOL_DAYS_MASK,
 };
 
 /**
@@ -47,9 +56,11 @@ export class SchoolSettingsService {
   }
 
   async view(): Promise<SchoolSettingsDto> {
-    const settings = await this.current();
+    const { schoolDaysMask, ...settings } = await this.current();
     return {
       ...settings,
+      // The mask is how the row stores it; the API speaks in day names.
+      schoolDays: daysFromMask(schoolDaysMask),
       admissionNumberExample: formatAdmissionNumber(
         new Date().getUTCFullYear(),
         1,
@@ -86,6 +97,9 @@ export class SchoolSettingsService {
       ...(dto.reportShowClassStats !== undefined
         ? { reportShowClassStats: dto.reportShowClassStats }
         : {}),
+      ...(dto.schoolDays !== undefined
+        ? { schoolDaysMask: maskFromDays(dto.schoolDays) }
+        : {}),
     };
 
     await this.prisma.schoolSettings.upsert({
@@ -94,9 +108,11 @@ export class SchoolSettingsService {
       update: merged,
     });
 
-    const changed = (Object.keys(merged) as (keyof SchoolSettings)[]).filter(
-      (key) => merged[key] !== before[key],
-    );
+    const changed = (Object.keys(merged) as (keyof SchoolSettings)[])
+      .filter((key) => merged[key] !== before[key])
+      // The audit trail is read by people, so it names the field they changed
+      // rather than the column it happens to be stored in.
+      .map((key) => (key === 'schoolDaysMask' ? 'schoolDays' : key));
 
     return { settings: await this.view(), changed };
   }
@@ -132,6 +148,9 @@ export class SchoolSettingsService {
       invoiceDueDays: row.invoiceDueDays,
       reportShowPosition: row.reportShowPosition,
       reportShowClassStats: row.reportShowClassStats,
+      // Normalised on read so a row written before this column existed, or one
+      // edited by hand, still describes a week the school can open in.
+      schoolDaysMask: normaliseMask(row.schoolDaysMask),
     };
   }
 }
