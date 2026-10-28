@@ -188,9 +188,44 @@ describe('School settings', () => {
       invoiceDueDays: null,
       reportShowPosition: true,
       reportShowClassStats: true,
+      schoolDays: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'],
     });
     // Reading never writes a row.
     expect(await ctx.db.schoolSettings.count()).toBe(0);
+  });
+
+  describe('the school week', () => {
+    it('stores a six-day week and reads it back in week order', async () => {
+      const response = await setSettings({
+        schoolDays: ['saturday', 'MONDAY', 'FRIDAY'],
+      }).expect(200);
+
+      expect(response.body.schoolDays).toEqual([
+        'MONDAY',
+        'FRIDAY',
+        'SATURDAY',
+      ]);
+
+      // Named the way the API names it, not the way the column stores it.
+      const entry = await ctx.db.auditLog.findFirst({
+        where: { action: 'school.settings.updated' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(entry?.description).toContain('schoolDays');
+      expect(entry?.description).not.toContain('Mask');
+    });
+
+    it('refuses a day that is not a day', async () => {
+      await setSettings({ schoolDays: ['MONDAY', 'FUNDAY'] }).expect(400);
+    });
+
+    it('refuses the same day twice', async () => {
+      await setSettings({ schoolDays: ['MONDAY', 'MONDAY'] }).expect(400);
+    });
+
+    it('refuses an empty week', async () => {
+      await setSettings({ schoolDays: [] }).expect(400);
+    });
   });
 
   describe('admission numbers', () => {

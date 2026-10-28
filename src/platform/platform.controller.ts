@@ -29,6 +29,7 @@ import {
 } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
 import { SessionMeta } from '../auth/token.service';
+import { ChangePasswordDto, MessageDto } from '../auth/dto/auth.dto';
 import {
   GrantPlatformAccessDto,
   PlatformAdminDto,
@@ -101,6 +102,24 @@ export class PlatformController {
   @ApiOperation({ summary: 'The signed-in operator' })
   me() {
     return this.auth.me();
+  }
+
+  @Post('auth/change-password')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  // Verifies a password, so it carries the same budget as the login it guards.
+  @Throttle(AUTH_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Change your own platform password (revokes all sessions)',
+    description:
+      'The platform equivalent of /auth/change-password, which a platform ' +
+      'token cannot reach: that route resolves a school membership.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async changePassword(@Body() dto: ChangePasswordDto): Promise<MessageDto> {
+    await this.auth.changePassword(dto);
+    return { message: 'Password changed. Please sign in again.' };
   }
 
   // -------------------------------------------------------------------------

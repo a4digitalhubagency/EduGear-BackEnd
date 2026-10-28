@@ -97,7 +97,19 @@ Rules that follow:
 ## Request pipeline
 
 `RequestContextMiddleware` (opens the ALS store) → `ThrottlerGuard` → `JwtAuthGuard` →
-`PermissionsGuard`. All three guards are global in [app.module.ts](src/app.module.ts); order matters.
+`PermissionsGuard`. All three guards are global in [app.module.ts](src/app.module.ts); order matters:
+rate limiting runs before authentication so an unauthenticated flood never costs a JWT verify and a
+lookup. That is also why the throttle tracker cannot key on the signed-in user — nobody is signed in
+yet — and why **who a budget belongs to** is decided in
+[client-ip.ts](src/common/guards/client-ip.ts) instead.
+
+The web app calls this API from its own server, so every request shares one socket address and the
+whole estate would share one budget. `X-Forwarded-For` cannot fix that: the API is reachable
+directly, so trusting a hop further back would let anyone mint a budget per request. Instead the
+front end sends `X-Client-Ip` with `X-Edge-Secret` matching `TRUSTED_PROXY_SECRET` (timing-safe
+compare), and only then is the address believed. **No secret, a wrong secret, or a value that is not
+an address falls back to the socket address** — narrower, never wider. Keys are namespaced
+(`fwd:` / `ip:`) so a direct caller cannot spend a real user's budget by claiming their address.
 
 Route metadata comes from [src/common/decorators/index.ts](src/common/decorators/index.ts):
 `@Public()`, `@RequirePermissions(...)`, `@AllowNoTenant()`, `@CurrentUser()`, `@CurrentSchool()`.
@@ -270,7 +282,13 @@ every rule is explicit:
   school-wide cache key, and adding one to the hot path is not worth it for
   something this rare.
 - The platform admin snapshot is **deliberately not cached**: revocation has to
-  bite on the next request, and there are only a handful of rows.
+  bite on the next request, and there are only a handful of rows. That is also
+  what makes `POST /platform/auth/change-password` work — it bumps
+  `tokenVersion`, and the strategy's platform branch compares it every request,
+  so the operator's other sessions die at once. The school route cannot serve
+  this: it resolves an `AuthContext` a platform session has none of, so the
+  guard answers 403 before the handler runs. **Anything new that both scopes
+  need gets two routes, not one route that branches.**
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
 
@@ -346,7 +364,19 @@ role only, because no member of staff holds it.
 ### Settings
 
 [school-settings.service.ts](src/tenants/school-settings.service.ts) — an absent row means defaults,
-and reads never write one. Anything new that reads a setting should degrade to the default rather
+and reads never write one.
+
+**Inside a term is not the same as a school day.** A term runs straight through
+the weekends it contains, so a term lookup alone once accepted a register for a
+Sunday. The school's own week lives in
+[school-days.ts](src/tenants/school-days.ts) as a 7-bit mask (a scalar column, so
+"did this change" stays `!==`; an array would compare references), default
+Monday–Friday, and `normaliseMask` refuses an empty week because a school with
+no open day could never take a register again. The API speaks in day names and
+the column stores the mask — keep the mask out of DTOs and out of audit
+descriptions. This deliberately does **not** model one irregular day: a make-up
+Saturday or a mid-term holiday needs a per-date calendar, which is a larger
+feature than a weekly pattern. Anything new that reads a setting should degrade to the default rather
 than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
 [admission-number.ts](src/students/admission-number.ts) and
 [receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.

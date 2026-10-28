@@ -52,6 +52,18 @@ const toFloat = ({ value }: { value: unknown }) => {
   return raw === undefined || raw === '' ? undefined : Number.parseFloat(raw);
 };
 
+/**
+ * A variable set to nothing is the same as one that was never set.
+ *
+ * Only the numeric and boolean transforms below did this, so a string variable
+ * with a length rule would refuse to boot on `VAR=` — which is exactly how the
+ * commented-out lines in .env.example arrive once someone copies the file.
+ */
+const toOptionalString = ({ value }: { value: unknown }) => {
+  const raw = asString(value);
+  return raw === undefined || raw.trim() === '' ? undefined : raw.trim();
+};
+
 const toBool = ({ value }: { value: unknown }) => {
   const raw = asString(value);
   return raw === undefined || raw === ''
@@ -185,6 +197,25 @@ export class EnvironmentVariables {
   @Min(1)
   @Transform(toInt)
   STRICT_THROTTLE_LIMIT = 5;
+
+  /**
+   * Lets the front end say which client a request is really for, so the whole
+   * estate does not share one rate-limit budget behind its server's address.
+   *
+   * Unset means the header is ignored entirely and every request is tracked by
+   * its socket address, which is the safe reading of a missing variable: a
+   * narrower budget, never a wider one. Long because a guessed value hands out
+   * the ability to opt out of rate limiting.
+   */
+  @IsString()
+  @MinLength(32, {
+    message:
+      'TRUSTED_PROXY_SECRET: must be at least 32 characters — a short one is ' +
+      'guessable, and guessing it defeats rate limiting entirely',
+  })
+  @IsOptional()
+  @Transform(toOptionalString)
+  TRUSTED_PROXY_SECRET?: string;
 
   @IsEnum(EmailProvider)
   EMAIL_PROVIDER: EmailProvider = EmailProvider.Console;

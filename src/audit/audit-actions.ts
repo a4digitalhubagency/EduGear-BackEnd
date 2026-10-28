@@ -88,6 +88,7 @@ export const AUDIT_ACTIONS = {
   // A4's own staff acting on a tenant. Written against the affected school, so
   // its trail shows what was done to it and by whom.
   PLATFORM_LOGIN_SUCCEEDED: 'platform.login_succeeded',
+  PLATFORM_PASSWORD_CHANGED: 'platform.password_changed',
   PLATFORM_LOGIN_FAILED: 'platform.login_failed',
   PLATFORM_ACCESS_GRANTED: 'platform.access_granted',
   PLATFORM_ACCESS_REVOKED: 'platform.access_revoked',

@@ -9,6 +9,8 @@ import { toDateOnly } from '../academics/date-range';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { ReportCardsService } from '../results/report-cards.service';
+import { SchoolSettingsService } from '../tenants/school-settings.service';
+import { humanWeekday, isSchoolDay, weekdayOf } from '../tenants/school-days';
 import { tally } from './attendance-summary';
 import {
   AttendanceRecordDto,
@@ -25,7 +27,10 @@ import {
  * Taken by the arm's form teacher, or by staff who manage the academic
  * structure (administrators, the principal) — every teacher holds
  * attendance.create, so the permission alone would let anyone mark any class.
- * A register is for a school day inside a term, never a future one.
+ * A register is for a school day inside a term, never a future one. Inside a
+ * term is not enough on its own: a term runs straight through the weekends it
+ * contains, so the school's own week (school-days.ts) decides which of those
+ * days a register may exist for.
  */
 @Injectable()
 export class AttendanceService implements OnModuleInit {
@@ -33,6 +38,7 @@ export class AttendanceService implements OnModuleInit {
     @InjectPrisma() private readonly prisma: TenantAwarePrisma,
     private readonly accessControl: AccessControlService,
     private readonly reportCards: ReportCardsService,
+    private readonly settings: SchoolSettingsService,
   ) {}
 
   /** Report cards print attendance; they get it from here. */
@@ -54,9 +60,10 @@ export class AttendanceService implements OnModuleInit {
 
   async register(query: RegisterQueryDto): Promise<RegisterDto> {
     const date = toDateOnly(query.date);
-    const [label, term, students] = await Promise.all([
+    const [label, term, { schoolDaysMask }, students] = await Promise.all([
       this.armLabel(query.classArmId),
       this.termOn(date),
+      this.settings.current(),
       this.prisma.student.findMany({
         where: { classArmId: query.classArmId, status: StudentStatus.ACTIVE },
         select: { id: true, studentId: true, firstName: true, lastName: true },
@@ -91,6 +98,7 @@ export class AttendanceService implements OnModuleInit {
       canEdit:
         term !== null &&
         !this.isFuture(date) &&
+        isSchoolDay(date, schoolDaysMask) &&
         (await this.mayTake(query.classArmId)),
       students: rows,
       present: counts.present - counts.late,
@@ -119,6 +127,18 @@ export class AttendanceService implements OnModuleInit {
     if (!(await this.termOn(date))) {
       throw AppException.badRequest(
         'That date is not inside any term, so it is not a school day',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+
+    // A term contains its weekends, so being inside one proves nothing about
+    // the day itself. A school that does open on a Saturday says so in its
+    // settings, and then this passes.
+    const { schoolDaysMask } = await this.settings.current();
+    if (!isSchoolDay(date, schoolDaysMask)) {
+      throw AppException.badRequest(
+        `${humanWeekday(weekdayOf(date))} is not a school day. ` +
+          'Change the school days in settings if that is wrong.',
         ErrorCode.VALIDATION_ERROR,
       );
     }
