@@ -111,6 +111,14 @@ compare), and only then is the address believed. **No secret, a wrong secret, or
 an address falls back to the socket address** — narrower, never wider. Keys are namespaced
 (`fwd:` / `ip:`) so a direct caller cannot spend a real user's budget by claiming their address.
 
+That fallback is only as good as `req.ip`, which is why `TRUSTED_PROXY_HOPS` in
+[http-settings.ts](src/http-settings.ts) is **2, not 1**. Railway strips the caller's
+`X-Forwarded-For` and rewrites it as `<real client>, <railway edge>`, so the client is the second
+entry from the right. At 1, `req.ip` was the edge — and Railway rotates between PoPs mid-session, so
+one client collected a budget per PoP and never reached a limit while strangers behind one PoP
+throttled each other. Every `SessionMeta.ip` on a login record was the edge's address too. **Put a
+CDN or WAF in front and this number goes up with it**; `rate-limit.e2e-spec.ts` fails if it does not.
+
 Route metadata comes from [src/common/decorators/index.ts](src/common/decorators/index.ts):
 `@Public()`, `@RequirePermissions(...)`, `@AllowNoTenant()`, `@CurrentUser()`, `@CurrentSchool()`.
 `PermissionsGuard` is also the last line of tenant defence — it rejects any authenticated request that

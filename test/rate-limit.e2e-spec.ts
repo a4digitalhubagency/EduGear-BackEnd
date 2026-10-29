@@ -53,6 +53,43 @@ describe('Rate limiting', () => {
     expect(other.status).toBe(401);
   });
 
+  // Railway rewrites X-Forwarded-For to `<real client>, <railway edge>` and
+  // answers from several edge PoPs, rotating between them mid-session. With
+  // `trust proxy` set to 1, req.ip was the edge rather than the client, so a
+  // single client collected a budget per PoP and never hit a limit.
+  describe('behind Railway', () => {
+    const edges = ['46.151.193.241', '152.233.29.4', '46.151.193.242'];
+
+    const login = (forwardedFor: string) =>
+      ctx
+        .http()
+        .post('/api/auth/login')
+        .set('X-Forwarded-For', forwardedFor)
+        .send({ email: 'nobody@example.com', password: 'WrongPass123' });
+
+    it('keeps one client to one budget however the edge rotates', async () => {
+      const client = '203.0.113.70';
+
+      // Four attempts, each through a different edge address. All four belong
+      // to the same person, so the fourth is over a limit of three.
+      expect((await login(`${client}, ${edges[0]}`)).status).toBe(401);
+      expect((await login(`${client}, ${edges[1]}`)).status).toBe(401);
+      expect((await login(`${client}, ${edges[2]}`)).status).toBe(401);
+      expect((await login(`${client}, ${edges[0]}`)).status).toBe(429);
+    });
+
+    it('does not make strangers behind one edge share a budget', async () => {
+      const edge = edges[0];
+
+      // The mirror image: one edge, different clients. Exhausting one must not
+      // spend anyone else's.
+      for (let i = 0; i < 4; i += 1) {
+        await login(`203.0.113.8${i === 3 ? 0 : i}, ${edge}`);
+      }
+      expect((await login(`203.0.113.99, ${edge}`)).status).toBe(401);
+    });
+  });
+
   // The web app calls this API from its own server, so every request shares one
   // address. Without a way to say who the request is really for, one busy
   // school spends the budget of every other.
