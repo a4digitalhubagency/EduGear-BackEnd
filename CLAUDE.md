@@ -155,10 +155,19 @@ are **copied into each school** at provisioning so a school can retune its own r
   without it. Never make that fallback reachable in production. Refresh tokens stay in Postgres.
 - Redis failures must not break requests: cache reads fall through to the database, writes are logged.
   A failed *invalidation* is logged at error level because it leaves stale permissions until the TTL.
-- Migrations: `prisma migrate deploy` as a release step — [railway.json](railway.json)'s
-  `preDeployCommand`, never on container boot. **Verify Railway's dashboard actually has it**:
-  the file was ignored on the first service, so migrations silently never ran and, with the
-  healthcheck also unset, every broken deploy still reported success; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+- Migrations: `prisma migrate deploy` as a release step — the `preDeployCommand` in
+  [.railway/railway.ts](.railway/railway.ts), never on container boot. **Verify Railway's dashboard
+  actually has it**: the config was ignored on the first service, so migrations silently never ran
+  and, with the healthcheck also unset, every broken deploy still reported success; `prisma db push`
+  is never used against production.
+- **Railway config is code, and it is not read at deploy time.** `railway.json` was applied by
+  pushing a commit; `.railway/railway.ts` is applied by running `railway apply`, per environment.
+  Editing it and merging changes nothing on its own — somebody has to apply it to production *and*
+  staging. `npm run typecheck:railway` compiles it against Railway's own types (CI runs this), so a
+  mistyped field name or restart policy fails the build rather than a deploy. The root tsconfig
+  covers `src`/`test`/`prisma` only, which is why the file has a tsconfig of its own.
+  `export const partial` scopes it to the backend service; the project's Postgres and Redis are
+  managed from the dashboard and must stay outside this file. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
