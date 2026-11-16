@@ -1,35 +1,40 @@
 /**
- * Railway configuration as code.
+ * Railway deploy settings for the backend service.
  *
- * Replaces the root `railway.json`, which Railway stops reading on 1 December
- * 2026. Every value below is a direct translation of that file — nothing is
- * new, and nothing was dropped.
+ * **The Railway dashboard is authoritative. This file is the record of what it
+ * must contain.** Railway does not read `.railway/` during a deploy — it is
+ * applied with the Railway CLI, which this project deliberately does not use
+ * (the account carries other organisations' work, so service settings are
+ * changed by hand in the dashboard instead). Nothing here reaches Railway on
+ * its own.
  *
- * Two differences from the file it replaces are worth knowing:
+ * It is kept, rather than written as prose, for one reason: `npm run
+ * typecheck:railway` compiles it against Railway's own published types, so the
+ * record cannot drift into field names and enum values that do not exist. A
+ * comment claiming the restart policy is `ON_FAILUER` would survive review;
+ * this does not.
  *
- * 1. Railway does not read this file during a deploy. The old `railway.json`
- *    was applied by pushing a commit; this is applied by running
- *    `railway apply`, which writes the settings onto the service. A change
- *    here does nothing until someone applies it.
+ * It replaces the root `railway.json`, which Railway stops reading on
+ * 1 December 2026. That file is not incidental: it carries the
+ * `preDeployCommand` that runs `prisma migrate deploy` as a release step, and
+ * the healthcheck that stops a deploy the app cannot serve from reporting
+ * success. Both were absent from the first Railway service, and the result was
+ * migrations that silently never ran behind deploys that all claimed to be
+ * fine.
  *
- * 2. `partial` scopes the file to one service. The project also holds Postgres
- *    and Redis, which are managed from the dashboard; without this, applying a
- *    file that describes only the backend invites Railway to reconcile the
- *    others against a definition that does not mention them.
+ * Because the dashboard values and this file say the same thing, entering them
+ * in the dashboard is a no-op while `railway.json` is still read, and becomes
+ * the live configuration the moment it is not. There is no cutover window in
+ * which migrations stop running.
  *
- * The settings themselves matter more than they look. `preDeployCommand` is
- * the release step that runs migrations — it is the reason this file cannot
- * simply be deleted — and `healthcheckPath` is what stops a deploy the app
- * cannot serve from being reported as a success. Both were missing from the
- * first Railway service, and the result was migrations that silently never ran
- * behind deploys that all claimed to be fine.
+ * See docs/railway-service-settings.md for what to type where.
  */
 import { defineRailway, project, service } from 'railway/iac';
 
 /**
- * The one service this file manages. Must match the service's name in Railway
- * exactly; a name that matches nothing creates a second service rather than
- * updating this one.
+ * The service these settings belong to. Also scopes the file, should anyone
+ * ever apply it: the project's Postgres and Redis are managed from the
+ * dashboard and must stay outside it.
  */
 export const partial = 'EduGear-BackEnd';
 
