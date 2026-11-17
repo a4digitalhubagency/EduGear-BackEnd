@@ -140,6 +140,151 @@ describe('Platform console', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Keeping a console session alive
+  // -------------------------------------------------------------------------
+
+  describe('the platform session', () => {
+    /** Signs in and hands back the whole token pair, not just the access one. */
+    async function session(email: string, role = PlatformRole.OWNER) {
+      await platformLogin(email, role);
+      const login = await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email, password: PASSWORD })
+        .expect(200);
+      return login.body.tokens as {
+        accessToken: string;
+        refreshToken: string;
+      };
+    }
+
+    it('exchanges a refresh token for a working pair', async () => {
+      // The access token lives fifteen minutes. Without this the console signs
+      // itself out every quarter hour and cannot recover.
+      const first = await session('refresh@a4.test');
+
+      const refreshed = await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(200);
+
+      expect(refreshed.body.admin.email).toBe('refresh@a4.test');
+      await ctx
+        .http()
+        .get('/api/platform/me')
+        .set(bearer(refreshed.body.tokens.accessToken))
+        .expect(200);
+    });
+
+    it('retires the old token, and treats replay as theft', async () => {
+      const first = await session('rotate@a4.test');
+      const second = await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(200);
+
+      // Used once, gone.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(401);
+
+      // And replaying it burns the family, so a captured token cannot be used
+      // alongside the real session.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: second.body.tokens.refreshToken })
+        .expect(401);
+    });
+
+    it('refuses a school session at the console door', async () => {
+      // The whole reason this is a separate path: a staff refresh token must
+      // never come back as a platform session.
+      const staff = await ctx
+        .http()
+        .post('/api/auth/login')
+        .send({ email: school.email, password: school.password })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: staff.body.tokens.refreshToken })
+        .expect(401);
+
+      // ...and it is still a perfectly good school session afterwards, or
+      // anyone could log staff out by offering their token at the wrong door.
+      await ctx
+        .http()
+        .post('/api/auth/refresh')
+        .send({ refreshToken: staff.body.tokens.refreshToken })
+        .expect(200);
+    });
+
+    it('refuses a platform session at the school door', async () => {
+      const operator = await session('crossing@a4.test');
+      await ctx
+        .http()
+        .post('/api/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('stops refreshing the moment access is revoked', async () => {
+      const operator = await session('revoked-refresh@a4.test');
+
+      await ctx.db.platformAdmin.updateMany({
+        where: { user: { email: 'revoked-refresh@a4.test' } },
+        data: { disabledAt: new Date() },
+      });
+
+      // A refresh token lives thirty days; revocation has to bite now.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('signs out, and the token cannot be used again', async () => {
+      const operator = await session('logout@a4.test');
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/logout')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('drops refresh tokens when the password changes', async () => {
+      const operator = await session('pwrefresh@a4.test');
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/change-password')
+        .set(bearer(operator.accessToken))
+        .send({ currentPassword: PASSWORD, newPassword: 'PlatformPass789' })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // An operator's own password
   // -------------------------------------------------------------------------
 

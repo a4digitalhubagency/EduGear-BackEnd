@@ -347,6 +347,17 @@ every rule is explicit:
   this: it resolves an `AuthContext` a platform session has none of, so the
   guard answers 403 before the handler runs. **Anything new that both scopes
   need gets two routes, not one route that branches.**
+- **A platform session refreshes through its own path.**
+  `TokenService.consumePlatformRefreshToken` requires `membershipId` to be
+  **null**, and `rotateRefreshToken` requires it to be set — so each refuses the
+  other's tokens outright rather than sharing a function whose condition could
+  be inverted. Before this, platform login handed back a refresh token nothing
+  could exchange and the console signed itself out every fifteen minutes.
+  Refreshing re-checks the live record — `disabledAt`, user status — because a
+  refresh token lives thirty days and revocation that only bites at the end of
+  that window is not revocation. A school token offered at the platform door is
+  refused but **not** revoked: it is valid for its own scope, and revoking it
+  would let anyone log staff out by guessing.
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
 

@@ -29,7 +29,11 @@ import {
 } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
 import { SessionMeta } from '../auth/token.service';
-import { ChangePasswordDto, MessageDto } from '../auth/dto/auth.dto';
+import {
+  ChangePasswordDto,
+  MessageDto,
+  RefreshTokenDto,
+} from '../auth/dto/auth.dto';
 import {
   GrantPlatformAccessDto,
   PlatformAdminDto,
@@ -94,6 +98,41 @@ export class PlatformController {
     @Req() req: Request,
   ): Promise<PlatformSessionDto> {
     return this.auth.login(dto, this.meta(req));
+  }
+
+  @Post('auth/refresh')
+  @Public()
+  @Throttle(AUTH_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Exchange a platform refresh token for a new pair',
+    description:
+      'Separate from /auth/refresh, which requires a school membership an ' +
+      'operator does not have. Refresh tokens rotate on every use, and ' +
+      'replaying a used one revokes the whole family. Platform access that ' +
+      'has been revoked in the meantime is refused here, not at the end of ' +
+      'the refresh window.',
+  })
+  refresh(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: Request,
+  ): Promise<PlatformSessionDto> {
+    return this.auth.refresh(dto.refreshToken, this.meta(req));
+  }
+
+  @Post('auth/logout')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'End this platform session',
+    description:
+      'Public because it proves itself with the refresh token it revokes; an ' +
+      'expired access token must not be able to strand a session open.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async logout(@Body() dto: RefreshTokenDto): Promise<MessageDto> {
+    await this.auth.logout(dto.refreshToken);
+    return { message: 'Signed out.' };
   }
 
   @Get('me')
