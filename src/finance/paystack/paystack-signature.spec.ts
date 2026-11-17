@@ -72,6 +72,7 @@ describe('parseChargeEvent', () => {
     expect(parseChargeEvent(event)).toEqual({
       event: 'charge.success',
       reference: 'EDU-abc',
+      subaccountCode: null,
       transactionId: '302961',
       amountKobo: 5000000,
       currency: 'NGN',
@@ -149,5 +150,55 @@ describe('parseChargeEvent — the dedupe key', () => {
     expect(event({ id: [] })?.transactionId).toBe('EDU-1');
     expect(event({ id: '' })?.transactionId).toBe('EDU-1');
     expect(event({ id: null })?.transactionId).toBe('EDU-1');
+  });
+
+  describe('the settling subaccount', () => {
+    const base = {
+      event: 'charge.success',
+      data: {
+        id: 302961,
+        reference: 'EDU-abc',
+        amount: 150000,
+        currency: 'NGN',
+        status: 'success',
+      },
+    };
+
+    it('reads the code out of the object Paystack documents', () => {
+      const parsed = parseChargeEvent({
+        ...base,
+        data: { ...base.data, subaccount: { subaccount_code: 'ACCT_xyz' } },
+      });
+      expect(parsed?.subaccountCode).toBe('ACCT_xyz');
+    });
+
+    it('reads it when sent as a bare code instead', () => {
+      const parsed = parseChargeEvent({
+        ...base,
+        data: { ...base.data, subaccount: 'ACCT_xyz' },
+      });
+      expect(parsed?.subaccountCode).toBe('ACCT_xyz');
+    });
+
+    it('treats anything else as no claim, rather than as a mismatch', () => {
+      // The caller refuses a payment whose subaccount disagrees, so a shape it
+      // cannot read has to mean "not stated" — reading it as a difference
+      // would reject every payment Paystack describes a new way.
+      for (const subaccount of [
+        undefined,
+        null,
+        '',
+        {},
+        42,
+        [],
+        { subaccount_code: 7 },
+      ]) {
+        const parsed = parseChargeEvent({
+          ...base,
+          data: { ...base.data, subaccount },
+        });
+        expect(parsed?.subaccountCode).toBeNull();
+      }
+    });
   });
 });

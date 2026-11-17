@@ -280,6 +280,25 @@ logged-in user, so it has its own rules:
   receipt numbering, invoice recomputation and notification. Do not write a second verification path.
 - A pending online attempt counts against the invoice ceiling, so `sweepAbandoned` clears stale ones —
   but only after the provider confirms they were never collected.
+- **Fees settle into the school's own bank, never EduGear's.** Each school has a Paystack subaccount
+  ([settlement.service.ts](src/finance/paystack/settlement.service.ts)); `initialize` sends
+  `subaccount` and `bearer: 'subaccount'` on every transaction. Both matter: `percentage_charge` on a
+  subaccount is the **main** account's cut, so `PLATFORM_PERCENTAGE_CHARGE = 0` is what leaves the
+  whole fee with the school — reading it as the subaccount's share would hand every naira to the
+  wrong party — and `bearer` **defaults to `account`**, so omitting it makes EduGear pay every
+  school's Paystack charges.
+- **A school with no subaccount cannot take cards.** There is no fallback, because the only fallback
+  is settling into EduGear's account — holding other businesses' revenue, which is the thing this
+  design exists to prevent. The refusal happens before a payment row is created.
+- **Both routes to VERIFIED check where the money went.** The webhook and `refresh` are parallel
+  paths; a guard on one is not a guard. Each compares the settling subaccount against the school's
+  own, behind a null check — Paystack's payload has not been observed carrying the field in this
+  integration, and failing closed on an unconfirmed field would reject every real payment. Tighten it
+  to required once staging shows the field arriving.
+- **The account number is never stored.** Paystack holds it; a subaccount is updated by its code. We
+  keep the bank, the name the bank returned and the last four digits, which is what a bursar needs to
+  recognise the account. The platform console sees only *whether* settlement is configured — it is
+  metadata-only and sees no money, and a bank account is what that rule is for.
 
 ### The platform console (A4's own surface)
 

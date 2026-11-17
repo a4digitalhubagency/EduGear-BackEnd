@@ -18,6 +18,8 @@ import {
 } from './utils/test-app';
 
 const SECRET = 'sk_test_e2e_secret';
+/** Every school taking cards has one; without it `start` refuses. */
+const SUBACCOUNT = 'ACCT_paystackcollege';
 
 /**
  * Stands in for Paystack. It never reaches the network, it records what it was
@@ -32,8 +34,11 @@ class FakePaystackClient {
     amountKobo: number;
     reference: string;
     metadata: Record<string, string>;
+    subaccount: string;
+    bearer: 'account' | 'subaccount';
   }[] = [];
   verifyCalls: string[] = [];
+  subaccountCalls: { businessName: string; percentageCharge: number }[] = [];
 
   /** Replaced by tests that need a failure or a particular verdict. */
   onInitialize!: (params: {
@@ -50,9 +55,43 @@ class FakePaystackClient {
     amountKobo: number;
     reference: string;
     metadata: Record<string, string>;
+    subaccount: string;
+    bearer: 'account' | 'subaccount';
   }): Promise<InitializedTransaction> {
     this.initializeCalls.push(params);
     return this.onInitialize(params);
+  }
+
+  listBanks(): Promise<{ name: string; code: string; currency: string }[]> {
+    return Promise.resolve([
+      { name: 'Guaranty Trust Bank', code: '058', currency: 'NGN' },
+      { name: 'Access Bank', code: '044', currency: 'NGN' },
+    ]);
+  }
+
+  resolveAccount(
+    accountNumber: string,
+  ): Promise<{ accountNumber: string; accountName: string }> {
+    return Promise.resolve({
+      accountNumber,
+      accountName: 'PAYSTACK COLLEGE',
+    });
+  }
+
+  createSubaccount(params: {
+    businessName: string;
+    percentageCharge: number;
+  }): Promise<string> {
+    this.subaccountCalls.push(params);
+    return Promise.resolve('ACCT_newlycreated');
+  }
+
+  updateSubaccount(
+    _code: string,
+    params: { businessName: string; percentageCharge: number },
+  ): Promise<void> {
+    this.subaccountCalls.push(params);
+    return Promise.resolve();
   }
 
   verify(reference: string): Promise<VerifiedTransaction> {
@@ -64,6 +103,7 @@ class FakePaystackClient {
   reset(): void {
     this.initializeCalls = [];
     this.verifyCalls = [];
+    this.subaccountCalls = [];
     this.configured = true;
     this.secretKey = SECRET;
     this.onInitialize = ({ reference }) =>
@@ -79,6 +119,7 @@ class FakePaystackClient {
         currency: 'NGN',
         paidAt: null,
         channel: null,
+        subaccountCode: SUBACCOUNT,
       });
   }
 }
@@ -160,6 +201,20 @@ describe('Paystack online payments', () => {
     await resetDatabase(ctx.db);
     school = await registerSchool(ctx, { schoolName: 'Paystack College' });
     other = await registerSchool(ctx, { schoolName: 'Rival Academy' });
+
+    // Fees settle into the school's own bank, so a school without a
+    // subaccount cannot take cards at all. Both schools get one; the refusal
+    // is covered by its own test, which clears it first.
+    await ctx.db.school.updateMany({
+      where: { id: { in: [school.schoolId, other.schoolId] } },
+      data: {
+        paystackSubaccountCode: SUBACCOUNT,
+        settlementBankCode: '058',
+        settlementBankName: 'Guaranty Trust Bank',
+        settlementAccountName: 'PAYSTACK COLLEGE',
+        settlementAccountLast4: '6789',
+      },
+    });
 
     // Invitation links come from the mock rather than a mailbox.
     jest
@@ -373,6 +428,7 @@ describe('Paystack online payments', () => {
         currency: 'NGN',
         paidAt: new Date('2025-10-02T09:00:00.000Z'),
         channel: 'card',
+        subaccountCode: SUBACCOUNT,
       });
 
     // The money is in: the invoice is settled, so there is nothing left to pay.
@@ -739,6 +795,7 @@ describe('Paystack online payments', () => {
         currency: 'NGN',
         paidAt: new Date('2025-10-02T09:00:00.000Z'),
         channel: 'card',
+        subaccountCode: SUBACCOUNT,
       });
 
     const response = await ctx
@@ -780,6 +837,7 @@ describe('Paystack online payments', () => {
         currency: 'NGN',
         paidAt: null,
         channel: 'card',
+        subaccountCode: SUBACCOUNT,
       });
 
     const response = await ctx
@@ -1007,4 +1065,131 @@ describe('Paystack online payments', () => {
       .expect(201);
     return assigned.body.invoices[0].id;
   }
+
+  // Fees belong to the school, so they settle into the school's own bank
+  // through its own Paystack subaccount. EduGear never holds the money, and a
+  // school that has not set one up cannot take cards at all.
+  describe('settlement', () => {
+    const head = auth;
+    const startPayment = (amount: number) =>
+      startOnline({ studentFeeId: invoiceId, amount });
+
+    it('sends the school subaccount, and puts the charge on the school', async () => {
+      await startPayment(5000);
+
+      const call = paystack.initializeCalls.at(-1);
+      expect(call?.subaccount).toBe(SUBACCOUNT);
+      // Paystack defaults this to the main account, so it must be sent every
+      // time or EduGear quietly pays the fee on every school's tuition.
+      expect(call?.bearer).toBe('subaccount');
+    });
+
+    it('refuses to take a card payment before settlement is set up', async () => {
+      await ctx.db.school.update({
+        where: { id: school.schoolId },
+        data: { paystackSubaccountCode: null },
+      });
+
+      const response = await startPayment(5000).expect(409);
+      expect(response.body.message).toMatch(/settlement account/i);
+
+      // And nothing was created to settle anywhere: the refusal happens before
+      // a payment row exists, not after one is left orphaned.
+      expect(paystack.initializeCalls).toHaveLength(0);
+      expect(
+        await ctx.db.payment.count({ where: { schoolId: school.schoolId } }),
+      ).toBe(0);
+    });
+
+    it('confirms the account name with the bank before anything is saved', async () => {
+      const response = await ctx
+        .http()
+        .put('/api/finance/settlement/resolve')
+        .set(head())
+        .send({ accountNumber: '0123456789', bankCode: '058' })
+        .expect(200);
+
+      expect(response.body.accountName).toBe('PAYSTACK COLLEGE');
+      expect(response.body.accountNumberMasked).toBe('******6789');
+
+      // Resolving changes nothing.
+      expect(paystack.subaccountCalls).toHaveLength(0);
+    });
+
+    it('stores the account, keeping only its last four digits', async () => {
+      await ctx.db.school.update({
+        where: { id: school.schoolId },
+        data: { paystackSubaccountCode: null },
+      });
+
+      const response = await ctx
+        .http()
+        .put('/api/finance/settlement')
+        .set(head())
+        .send({ accountNumber: '0123 4567 89', bankCode: '058' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        configured: true,
+        bankName: 'Guaranty Trust Bank',
+        accountName: 'PAYSTACK COLLEGE',
+        accountNumberMasked: '******6789',
+      });
+
+      // EduGear takes nothing from tuition: the whole fee is the school's.
+      expect(paystack.subaccountCalls.at(-1)?.percentageCharge).toBe(0);
+
+      const row = await ctx.db.school.findUniqueOrThrow({
+        where: { id: school.schoolId },
+      });
+      expect(row.paystackSubaccountCode).toBe('ACCT_newlycreated');
+      expect(row.settlementAccountLast4).toBe('6789');
+
+      // The account number is Paystack's to hold, not ours.
+      expect(JSON.stringify(row)).not.toContain('0123456789');
+    });
+
+    it('refuses an account number that is not ten digits', async () => {
+      await ctx
+        .http()
+        .put('/api/finance/settlement')
+        .set(head())
+        .send({ accountNumber: '012345678', bankCode: '058' })
+        .expect(400);
+    });
+
+    it('refuses a bank Paystack does not settle to', async () => {
+      await ctx
+        .http()
+        .put('/api/finance/settlement')
+        .set(head())
+        .send({ accountNumber: '0123456789', bankCode: '999' })
+        .expect(400);
+    });
+
+    it('leaves a payment pending when the money settled somewhere else', async () => {
+      const started = await startPayment(5000).expect(201);
+      paystack.onVerify = () =>
+        Promise.resolve({
+          status: 'success',
+          amountKobo: 500000,
+          currency: 'NGN',
+          paidAt: new Date(),
+          channel: 'card',
+          // Correct amount, correct reference, wrong destination.
+          subaccountCode: 'ACCT_someoneelse',
+        });
+
+      await ctx
+        .http()
+        .post(`/api/finance/payments/online/${started.body.paymentId}/refresh`)
+        .set(head())
+        .expect(200);
+
+      const payment = await ctx.db.payment.findUniqueOrThrow({
+        where: { id: started.body.paymentId },
+      });
+      expect(payment.status).toBe('PENDING');
+    });
+  });
 });
