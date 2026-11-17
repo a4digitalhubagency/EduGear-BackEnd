@@ -585,7 +585,12 @@ enum PaymentMethod {
 enum PaymentStatus {
   PENDING
   VERIFIED
+  /// Never collected, or evidence that did not hold up. It never counted.
   REJECTED
+  /// Collected, counted, and since given back. Distinct from REJECTED because
+  /// the money really did move both ways, and a school's records have to show
+  /// that rather than implying the payment never happened.
+  REFUNDED
 }
 
 /// A kind of charge — Tuition, Books, PTA levy.
@@ -732,6 +737,12 @@ model Payment {
   verifiedByMembershipId String?       @db.Uuid
   verifiedAt             DateTime?
   rejectionReason        String?
+  /// Refunds are settled by the school with the parent, off EduGear — fees go
+  /// straight to the school's own bank, so there is nothing here to reverse.
+  /// These three only record that it happened.
+  refundedAt             DateTime?
+  refundReason           String?
+  refundedByMembershipId String?       @db.Uuid
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
@@ -1043,6 +1054,7 @@ enum NotificationType {
   RESULT_PUBLISHED
   PAYMENT_VERIFIED
   PAYMENT_REJECTED
+  PAYMENT_REFUNDED
   FEE_REMINDER
   INVOICE_ISSUED
 }

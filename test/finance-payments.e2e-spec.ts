@@ -470,6 +470,120 @@ describe('Invoices and payments', () => {
     });
   });
 
+  describe('refunds', () => {
+    /** Verified payment of the whole invoice, ready to be given back. */
+    const paidInFull = async () => {
+      const invoiceId = await firstInvoice();
+      const payment = await pay({
+        studentFeeId: invoiceId,
+        amount: 50000,
+      }).expect(201);
+      await ctx
+        .http()
+        .post(`/api/finance/payments/${payment.body.id}/verify`)
+        .set(auth())
+        .expect(200);
+      return { invoiceId, paymentId: payment.body.id as string };
+    };
+
+    const refund = (paymentId: string, body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .post(`/api/finance/payments/${paymentId}/refund`)
+        .set(auth())
+        .send(body);
+
+    it('puts the money back on the invoice', async () => {
+      const { invoiceId, paymentId } = await paidInFull();
+      expect((await invoiceOf(invoiceId)).status).toBe('PAID');
+
+      const response = await refund(paymentId, {
+        reason: 'Parent paid twice for first term',
+      }).expect(200);
+      expect(response.body.status).toBe('REFUNDED');
+
+      // Recomputed from the verified payments, not adjusted by a delta.
+      expect(await invoiceOf(invoiceId)).toMatchObject({
+        amountPaid: 0,
+        balance: 50000,
+        status: 'UNPAID',
+      });
+    });
+
+    it('frees the money to be paid again', async () => {
+      const { invoiceId, paymentId } = await paidInFull();
+      await refund(paymentId, { reason: 'Paid into the wrong account' }).expect(
+        200,
+      );
+
+      // The overpayment ceiling has to have released it too, or the invoice
+      // reads as unpaid while refusing to accept payment.
+      await pay({ studentFeeId: invoiceId, amount: 50000 }).expect(201);
+    });
+
+    it('is not the same claim as a rejection', async () => {
+      const { paymentId } = await paidInFull();
+      await refund(paymentId, { reason: 'Duplicate' }).expect(200);
+
+      const row = await ctx.db.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+      });
+      expect(row.status).toBe('REFUNDED');
+      // The payment really happened: its receipt stands, and the reason is
+      // recorded apart from a rejection reason.
+      expect(row.receiptNumber).toBeTruthy();
+      expect(row.refundReason).toBe('Duplicate');
+      expect(row.rejectionReason).toBeNull();
+      expect(row.refundedAt).not.toBeNull();
+    });
+
+    it('explains itself on the statement', async () => {
+      const { invoiceId, paymentId } = await paidInFull();
+      await refund(paymentId, { reason: 'Duplicate' }).expect(200);
+
+      const invoice = await ctx.db.studentFee.findUniqueOrThrow({
+        where: { id: invoiceId },
+        select: { studentId: true },
+      });
+      const statement = await ctx
+        .http()
+        .get(`/api/finance/students/${invoice.studentId}/statement`)
+        .set(auth())
+        .expect(200);
+
+      const types = statement.body.ledger.map((e: { type: string }) => e.type);
+      // Both movements, so the balance going back up has a line against it.
+      expect(types).toContain('PAYMENT');
+      expect(types).toContain('REFUND');
+      expect(statement.body.closingBalance).toBe(50000);
+    });
+
+    it('refuses anything that was never collected', async () => {
+      const invoiceId = await firstInvoice();
+      const pending = await pay({
+        studentFeeId: invoiceId,
+        amount: 10000,
+      }).expect(201);
+
+      // Nothing was taken, so there is nothing to give back.
+      await refund(pending.body.id, { reason: 'Changed their mind' }).expect(
+        409,
+      );
+    });
+
+    it('refuses to refund twice', async () => {
+      const { paymentId } = await paidInFull();
+      await refund(paymentId, { reason: 'Duplicate' }).expect(200);
+      await refund(paymentId, { reason: 'Duplicate' }).expect(409);
+    });
+
+    it('needs a reason, because the parent is told it', async () => {
+      const { paymentId } = await paidInFull();
+      await refund(paymentId, {}).expect(400);
+      await refund(paymentId, { reason: '' }).expect(400);
+    });
+  });
+
   it('refuses to verify twice', async () => {
     const invoiceId = await firstInvoice();
     const payment = await pay({

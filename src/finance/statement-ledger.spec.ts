@@ -32,6 +32,7 @@ function payment(overrides: Partial<LedgerPayment> = {}): LedgerPayment {
     receiptNumber: 'RCP/2025/000001',
     method: 'BANK_TRANSFER',
     paidAt: day(5),
+    refundedAt: null,
     ...overrides,
   };
 }
@@ -178,5 +179,80 @@ describe('buildLedger', () => {
       expectedClosingBalance(invoices).toNumber(),
     );
     expect(closingBalance.toNumber()).toBe(37000);
+  });
+});
+
+describe('a refunded payment', () => {
+  it('shows both movements, and nets to nothing', () => {
+    const { entries, closingBalance } = buildLedger(
+      [invoice({ id: 'inv-1', totalAmount: d(50000), amountPaid: d(0) })],
+      [
+        payment({
+          amount: d(20000),
+          status: PaymentStatus.REFUNDED,
+          paidAt: day(5),
+          refundedAt: day(9),
+        }),
+      ],
+    );
+
+    const types = entries.map((e) => e.type);
+    expect(types).toEqual(['INVOICE', 'PAYMENT', 'REFUND']);
+
+    // Credited when paid, debited when returned.
+    expect(entries[1].credit.toNumber()).toBe(20000);
+    expect(entries[2].debit.toNumber()).toBe(20000);
+
+    // So the statement explains itself, and still agrees with the invoice.
+    expect(closingBalance.toNumber()).toBe(50000);
+  });
+
+  it('keeps the receipt number on both lines', () => {
+    const { entries } = buildLedger(
+      [invoice({ id: 'inv-1', totalAmount: d(50000) })],
+      [
+        payment({
+          status: PaymentStatus.REFUNDED,
+          receiptNumber: 'RCP/2025/000007',
+          refundedAt: day(9),
+        }),
+      ],
+    );
+    const refund = entries.find((e) => e.type === 'REFUND');
+    expect(refund?.reference).toBe('RCP/2025/000007');
+  });
+
+  it('dates the refund when it was returned, not when it was paid', () => {
+    const { entries } = buildLedger(
+      [invoice({ id: 'inv-1', totalAmount: d(50000) })],
+      [
+        payment({
+          status: PaymentStatus.REFUNDED,
+          paidAt: day(5),
+          refundedAt: day(20),
+        }),
+      ],
+    );
+    expect(entries.find((e) => e.type === 'REFUND')?.date).toEqual(day(20));
+  });
+
+  it('still appears when the refund date is missing', () => {
+    // Rather than vanishing over a null, which is how the balance ends up
+    // unexplained in the first place.
+    const { entries, closingBalance } = buildLedger(
+      [invoice({ id: 'inv-1', totalAmount: d(50000) })],
+      [payment({ status: PaymentStatus.REFUNDED, refundedAt: null })],
+    );
+    expect(entries.map((e) => e.type)).toContain('REFUND');
+    expect(closingBalance.toNumber()).toBe(50000);
+  });
+
+  it('leaves a verified payment untouched', () => {
+    const { entries, closingBalance } = buildLedger(
+      [invoice({ id: 'inv-1', totalAmount: d(50000), amountPaid: d(20000) })],
+      [payment({ amount: d(20000), status: PaymentStatus.VERIFIED })],
+    );
+    expect(entries.map((e) => e.type)).toEqual(['INVOICE', 'PAYMENT']);
+    expect(closingBalance.toNumber()).toBe(30000);
   });
 });
