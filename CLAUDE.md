@@ -40,13 +40,22 @@ npx jest src/auth/password.service.spec.ts
 npx jest --config ./test/jest-e2e.json --runInBand -t "cannot read another school"
 ```
 
+**Empty, not deleted — that distinction is the whole protection.** Deleting a variable leaves a hole
+that anything loading `.env` later will fill, and something does: importing `src/app.module` pulls in
+Prisma Client, which reads `.env` on import, long after `setup-env` has run. For months that handed
+the real R2 credentials back and the whole suite uploaded its fixtures to the live bucket, failing
+intermittently on that bucket's network errors — which read as a flaky quota test. Every loader
+involved declines to overwrite a variable that is already *present*, so an empty value sticks, and
+`StorageService` treats a blank credential as absent. `createTestApp` asserts the driver really is
+`local` and fails the run otherwise, so this cannot come undone silently again.
+
 Integration tests pin Redis to **logical database 1** ([test/utils/redis-url.ts](test/utils/redis-url.ts))
 and flush it in global setup. Rate-limit counters outlive a run (60s and 1h TTLs), so without the flush
 a second run inside the window fails — and flushing db 0 would wipe a developer's local cache.
 
 `test/global-setup.ts` runs `prisma migrate deploy` against `TEST_DATABASE_URL` once per e2e run, and
-[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database, **deletes the
-`R2_*` and `SENTRY_DSN` variables** so a developer with real credentials in `.env` cannot have the
+[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database, **sets the `R2_*`
+and `SENTRY_DSN` variables to empty** so a developer with real credentials in `.env` cannot have the
 suite write fixtures into a live bucket or file issues in the real Sentry project, and raises throttle
 limits — so most suites are unaffected by rate limiting, except
 [test/rate-limit.e2e-spec.ts](test/rate-limit.e2e-spec.ts), which sets its own limits before loading
@@ -110,6 +119,14 @@ front end sends `X-Client-Ip` with `X-Edge-Secret` matching `TRUSTED_PROXY_SECRE
 compare), and only then is the address believed. **No secret, a wrong secret, or a value that is not
 an address falls back to the socket address** — narrower, never wider. Keys are namespaced
 (`fwd:` / `ip:`) so a direct caller cannot spend a real user's budget by claiming their address.
+
+That fallback is only as good as `req.ip`, which is why `TRUSTED_PROXY_HOPS` in
+[http-settings.ts](src/http-settings.ts) is **2, not 1**. Railway strips the caller's
+`X-Forwarded-For` and rewrites it as `<real client>, <railway edge>`, so the client is the second
+entry from the right. At 1, `req.ip` was the edge — and Railway rotates between PoPs mid-session, so
+one client collected a budget per PoP and never reached a limit while strangers behind one PoP
+throttled each other. Every `SessionMeta.ip` on a login record was the edge's address too. **Put a
+CDN or WAF in front and this number goes up with it**; `rate-limit.e2e-spec.ts` fails if it does not.
 
 Route metadata comes from [src/common/decorators/index.ts](src/common/decorators/index.ts):
 `@Public()`, `@RequirePermissions(...)`, `@AllowNoTenant()`, `@CurrentUser()`, `@CurrentSchool()`.

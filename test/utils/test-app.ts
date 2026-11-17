@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { StorageService } from '../../src/files/storage/storage.service';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
@@ -36,6 +37,19 @@ export async function createTestApp(
   // The same prefix, proxy handling and body limit as production.
   applyHttpSettings(app, 'api');
   await app.init();
+
+  // The suite uploads real bytes. If the R2 credentials ever reach it again —
+  // a changed config module, a new way of loading .env — those bytes go to a
+  // live bucket over the network, which is both a data problem and the source
+  // of failures that look like flaky tests. Fail loudly instead, once, here.
+  const storage = app.get(StorageService);
+  if (storage.driver.name !== 'local') {
+    throw new Error(
+      `Integration tests must use local file storage, got "${storage.driver.name}". ` +
+        'Check that setup-env.ts still clears R2_* and that AppConfigModule ' +
+        'still sets ignoreEnvFile under NODE_ENV=test.',
+    );
+  }
 
   const db = new PrismaClient({
     datasources: { db: { url: process.env.DATABASE_URL } },
