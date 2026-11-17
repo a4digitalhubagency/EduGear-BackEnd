@@ -81,6 +81,7 @@ export const AUDIT_ACTIONS = {
   PAYMENT_RECORDED: 'payment.recorded',
   PAYMENT_VERIFIED: 'payment.verified',
   PAYMENT_REJECTED: 'payment.rejected',
+  PAYMENT_REFUNDED: 'payment.refunded',
   PAYMENT_REMINDERS_SENT: 'payment.reminders_sent',
   PAYMENT_ONLINE_STARTED: 'payment.online_started',
   PAYMENT_ONLINE_SETTLED: 'payment.online_settled',

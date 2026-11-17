@@ -197,8 +197,14 @@ export class FinanceDocumentsService {
       })),
       payments: payments.map((row) => ({
         id: row.id,
+        // A refunded payment keeps its receipt number: it was collected and
+        // receipted, and the row says REFUNDED beside it, so there is no
+        // ambiguity. Only money never received has no receipt.
         receiptNumber:
-          row.status === PaymentStatus.VERIFIED ? row.receiptNumber : null,
+          row.status === PaymentStatus.VERIFIED ||
+          row.status === PaymentStatus.REFUNDED
+            ? row.receiptNumber
+            : null,
         amount: toAmount(row.amount),
         method: row.method,
         status: row.status,

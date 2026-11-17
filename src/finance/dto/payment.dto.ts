@@ -78,6 +78,28 @@ export class RejectPaymentDto {
   reason: string;
 }
 
+export class RefundPaymentDto {
+  @ApiProperty({
+    example: 'Duplicate payment — parent paid twice for first term',
+    description: 'Shown to the parent, so write it for them',
+  })
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  reason: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When the school actually refunded it, if that is not today. The ' +
+      'refund happens at the bank, so it may have been days ago.',
+  })
+  @Type(() => Date)
+  @IsDate()
+  @IsOptional()
+  refundedAt?: Date;
+}
+
 const SORTABLE = ['paidAt', 'amount', 'createdAt'] as const;
 
 export class QueryPaymentsDto extends PaginationQueryDto {

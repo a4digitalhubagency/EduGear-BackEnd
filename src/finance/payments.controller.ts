@@ -25,6 +25,7 @@ import {
   PaymentDto,
   QueryPaymentsDto,
   RecordPaymentDto,
+  RefundPaymentDto,
   RejectPaymentDto,
 } from './dto/payment.dto';
 import { PaymentsService } from './payments.service';
@@ -118,6 +119,34 @@ export class PaymentsController {
       entityId: payment.id,
       description: `Rejected ₦${payment.amount} for ${payment.studentName}`,
       metadata: { reason: dto.reason },
+    });
+    return payment;
+  }
+
+  @Post(':id/refund')
+  @RequirePermissions(PERMISSIONS.FINANCE_VERIFY)
+  @ApiOperation({
+    summary: 'Record that a verified payment was refunded',
+    description:
+      'The refund itself happens at the bank, between the school and the ' +
+      'parent: fees settle into the school\u2019s own account, so there is ' +
+      'nothing here to reverse. This puts the amount back on the invoice and ' +
+      'tells the parent. Distinct from rejecting a payment, which says it ' +
+      'never counted in the first place.',
+  })
+  @ApiOkResponse({ type: PaymentDto })
+  @HttpCode(HttpStatus.OK)
+  async refund(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefundPaymentDto,
+  ): Promise<PaymentDto> {
+    const payment = await this.payments.refund(id, dto);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.PAYMENT_REFUNDED,
+      entityType: 'Payment',
+      entityId: payment.id,
+      description: `Refunded \u20a6${payment.amount} for ${payment.studentName}`,
+      metadata: { reason: dto.reason, receiptNumber: payment.receiptNumber },
     });
     return payment;
   }
