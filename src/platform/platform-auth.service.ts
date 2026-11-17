@@ -159,6 +159,73 @@ export class PlatformAuthService {
     };
   }
 
+  /**
+   * Keeps a console session alive past the fifteen-minute access token.
+   *
+   * Before this, platform login handed back a refresh token that nothing could
+   * exchange — `rotateRefreshToken` requires a membership, and an operator has
+   * none — so the console signed itself out every quarter of an hour and the
+   * retry failed complaining about school context.
+   *
+   * Everything that gates a login is re-checked here, not just the token's
+   * signature. A refresh token lives for thirty days; platform access can be
+   * revoked in a second, and revocation that only bites at the end of that
+   * window is not revocation. The admin snapshot is deliberately uncached for
+   * the same reason.
+   */
+  async refresh(
+    refreshToken: string,
+    meta: SessionMeta,
+  ): Promise<PlatformSessionDto> {
+    const stored = await this.tokens.consumePlatformRefreshToken(refreshToken);
+
+    const user = await RequestContext.runAsSystem(() =>
+      this.prisma.user.findUnique({
+        where: { id: stored.userId },
+        include: { platformAdmin: true },
+      }),
+    );
+
+    if (!user || !user.platformAdmin || user.platformAdmin.disabledAt) {
+      // Access was taken away after this token was issued.
+      await this.tokens.revokeFamily(stored.familyId);
+      throw AppException.unauthorized(
+        'Platform access has been revoked',
+        ErrorCode.TOKEN_INVALID,
+      );
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      await this.tokens.revokeFamily(stored.familyId);
+      throw AppException.forbidden(
+        'This account is not active',
+        ErrorCode.ACCOUNT_INACTIVE,
+      );
+    }
+
+    const tokens = await this.tokens.issuePlatformTokens({
+      userId: user.id,
+      platformAdminId: user.platformAdmin.id,
+      tokenVersion: user.tokenVersion,
+      meta,
+      // Same family, so presenting the retired token afterwards is detected
+      // as reuse rather than read as an unrelated session.
+      familyId: stored.familyId,
+    });
+
+    // Retired only once the replacement exists.
+    await this.tokens.revokeRefreshToken(refreshToken);
+
+    return {
+      admin: {
+        id: user.platformAdmin.id,
+        email: user.email,
+        role: user.platformAdmin.role,
+      },
+      tokens,
+    };
+  }
+
   async logout(refreshToken: string): Promise<void> {
     await this.tokens.revokeRefreshToken(refreshToken);
   }
