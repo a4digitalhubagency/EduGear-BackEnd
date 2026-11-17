@@ -1083,4 +1083,95 @@ describe('Parent portal', () => {
       expect(after.body.invitedAt).toBeNull();
     });
   });
+
+  // A parent holds a membership, which is how the portal knows them. It is not
+  // how Personnel should know them: a guardian invited to the portal was
+  // appearing in the staff list, counting toward Total Staff, and could be
+  // edited into a Teacher from the staff screen.
+  describe('a portal parent is not staff', () => {
+    let parentMembershipId: string;
+
+    beforeEach(async () => {
+      await parentLogin(emeka);
+      const membership = await ctx.db.membership.findFirstOrThrow({
+        where: { user: { email: 'emeka@family.test' } },
+      });
+      parentMembershipId = membership.id;
+    });
+
+    it('is left out of the staff list, its total and its pages', async () => {
+      const response = await ctx
+        .http()
+        .get('/api/users?limit=100')
+        .set(head())
+        .expect(200);
+
+      const emails = response.body.data.map(
+        (row: { email: string }) => row.email,
+      );
+      expect(emails).not.toContain('emeka@family.test');
+
+      // The count has to agree with the rows, or the dashboard reports a
+      // staff number the staff list cannot account for.
+      expect(response.body.meta.total).toBe(response.body.data.length);
+    });
+
+    it('is left out of a filtered count too', async () => {
+      const response = await ctx
+        .http()
+        .get('/api/users?status=ACTIVE&limit=100')
+        .set(head())
+        .expect(200);
+      const emails = response.body.data.map(
+        (row: { email: string }) => row.email,
+      );
+      expect(emails).not.toContain('emeka@family.test');
+    });
+
+    it('cannot be opened, edited or revoked from the staff screen', async () => {
+      // 404 rather than 403: as far as Personnel is concerned there is no such
+      // staff member. Their access is managed from Guardians.
+      await ctx
+        .http()
+        .get(`/api/users/${parentMembershipId}`)
+        .set(head())
+        .expect(404);
+
+      const teacher = await ctx.db.role.findFirstOrThrow({
+        where: { schoolId: school.schoolId, slug: 'TEACHER' },
+      });
+      await ctx
+        .http()
+        .patch(`/api/users/${parentMembershipId}`)
+        .set(head())
+        .send({ roleId: teacher.id })
+        .expect(404);
+
+      await ctx
+        .http()
+        .delete(`/api/users/${parentMembershipId}`)
+        .set(head())
+        .expect(404);
+
+      // And the attempt changed nothing.
+      const after = await ctx.db.membership.findUniqueOrThrow({
+        where: { id: parentMembershipId },
+      });
+      expect(after.roleId).not.toBe(teacher.id);
+      expect(after.status).toBe('ACTIVE');
+    });
+
+    it('still leaves real staff listed', async () => {
+      const response = await ctx
+        .http()
+        .get('/api/users?limit=100')
+        .set(head())
+        .expect(200);
+      const emails = response.body.data.map(
+        (row: { email: string }) => row.email,
+      );
+      expect(emails).toContain(school.email);
+      expect(response.body.meta.total).toBeGreaterThan(0);
+    });
+  });
 });

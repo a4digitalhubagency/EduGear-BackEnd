@@ -9,6 +9,7 @@ import {
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService } from '../auth/access-control.service';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { SYSTEM_ROLES } from '../common/constants/roles';
 import { RequestContext } from '../common/context/request-context';
 import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
@@ -33,6 +34,20 @@ import {
  * it is in, how much it uses. No student names, no fees, no results. An operator
  * who needs those asks the school.
  */
+/**
+ * Parents hold memberships too, so counting every ACTIVE membership counts
+ * them as staff. Same discriminator as UsersService: the role holding
+ * `portal.access`, which no member of staff does.
+ */
+const STAFF_MEMBERSHIP: Prisma.MembershipWhereInput = {
+  status: MembershipStatus.ACTIVE,
+  role: {
+    permissions: {
+      none: { permission: { key: PERMISSIONS.PORTAL_ACCESS } },
+    },
+  },
+};
+
 @Injectable()
 export class PlatformSchoolsService {
   private readonly logger = new Logger(PlatformSchoolsService.name);
@@ -230,9 +245,7 @@ export class PlatformSchoolsService {
           this.prisma.student.count({
             where: { status: StudentStatus.ACTIVE },
           }),
-          this.prisma.membership.count({
-            where: { status: MembershipStatus.ACTIVE },
-          }),
+          this.prisma.membership.count({ where: STAFF_MEMBERSHIP }),
           this.prisma.fileObject.aggregate({ _sum: { sizeBytes: true } }),
           this.prisma.school.count({
             where: { createdAt: { gte: thirtyDaysAgo } },
@@ -346,7 +359,7 @@ export class PlatformSchoolsService {
           }),
           this.prisma.membership.groupBy({
             by: ['schoolId'],
-            where: { ...where, status: MembershipStatus.ACTIVE },
+            where: { ...where, ...STAFF_MEMBERSHIP },
             _count: { _all: true },
             _max: { updatedAt: true },
           }),
