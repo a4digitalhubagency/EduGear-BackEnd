@@ -9,9 +9,18 @@ import { ZERO, balance } from './fee-math';
  * the property the unit tests pin — so a statement can never disagree with the
  * invoices it is built from. Cancelled invoices were withdrawn, not forgiven,
  * so they appear nowhere; pending and rejected payments are not money received.
+ *
+ * A refunded payment is the one case that appears twice: a credit when it was
+ * paid, and a debit when it was given back. Both happened, and the parent's
+ * money really did move both ways. Dropping it instead — which is what simply
+ * filtering on VERIFIED does — leaves a statement whose balance climbs with
+ * nothing on the page to account for it, which is the sort of thing a parent
+ * brings to the office. The two entries net to zero, so the closing balance is
+ * unchanged either way.
  */
 
-export type LedgerEntryType = 'INVOICE' | 'DISCOUNT' | 'WAIVER' | 'PAYMENT';
+export type LedgerEntryType =
+  'INVOICE' | 'DISCOUNT' | 'WAIVER' | 'PAYMENT' | 'REFUND';
 
 export interface LedgerEntry {
   date: Date;
@@ -42,6 +51,7 @@ export interface LedgerPayment {
   receiptNumber: string;
   method: string;
   paidAt: Date;
+  refundedAt: Date | null;
 }
 
 /** Credits land after the debit they settle when both share a timestamp. */
@@ -50,6 +60,9 @@ const ORDER: Record<LedgerEntryType, number> = {
   DISCOUNT: 1,
   PAYMENT: 2,
   WAIVER: 3,
+  // Last: a refund can only follow the payment it reverses, and on a day when
+  // both fall it should read in that order.
+  REFUND: 4,
 };
 
 export function buildLedger(
@@ -63,6 +76,11 @@ export function buildLedger(
   const verified = payments.filter(
     (payment) =>
       payment.status === PaymentStatus.VERIFIED &&
+      liveIds.has(payment.studentFeeId),
+  );
+  const refunded = payments.filter(
+    (payment) =>
+      payment.status === PaymentStatus.REFUNDED &&
       liveIds.has(payment.studentFeeId),
   );
 
@@ -107,13 +125,27 @@ export function buildLedger(
     }
   }
 
-  for (const payment of verified) {
+  for (const payment of [...verified, ...refunded]) {
     raw.push({
       date: payment.paidAt,
       type: 'PAYMENT',
       description: `Payment (${payment.method.replace('_', ' ').toLowerCase()})`,
       debit: ZERO,
       credit: payment.amount,
+      reference: payment.receiptNumber,
+    });
+  }
+
+  for (const payment of refunded) {
+    raw.push({
+      // Refunds are settled at the bank, so the day it was returned is rarely
+      // the day it was paid. Falling back keeps the entry on the statement
+      // rather than dropping it over a missing timestamp.
+      date: payment.refundedAt ?? payment.paidAt,
+      type: 'REFUND',
+      description: 'Refund',
+      debit: payment.amount,
+      credit: ZERO,
       reference: payment.receiptNumber,
     });
   }

@@ -20,6 +20,7 @@ import {
   PaymentDto,
   QueryPaymentsDto,
   RecordPaymentDto,
+  RefundPaymentDto,
   RejectPaymentDto,
 } from './dto/payment.dto';
 import { balance, deriveStatus, payable, sum, toAmount } from './fee-math';
@@ -227,6 +228,77 @@ export class PaymentsService {
       },
     ]);
     return rejected;
+  }
+
+  /**
+   * Records that a verified payment was given back.
+   *
+   * The money moves outside EduGear. Fees settle straight into the school's
+   * own bank, so there is nothing here to reverse — the school refunds the
+   * parent however it normally would, and this is the ledger catching up.
+   *
+   * It needs no new arithmetic. An invoice is recomputed from its verified
+   * payments rather than adjusted by a delta, so moving this one out of
+   * VERIFIED puts the balance back by itself and cannot drift. That is the
+   * same mechanism rejection uses.
+   *
+   * REFUNDED rather than REJECTED, though, because the two are not the same
+   * claim. A rejected payment never counted — bad evidence, or money that
+   * never arrived. A refunded one was collected, receipted and counted, and
+   * then returned. A school's records have to be able to tell those apart,
+   * and so does anyone reconciling a bank statement against them.
+   *
+   * Only a verified payment can be refunded: a pending one was never
+   * collected, and a rejected one never counted toward anything.
+   */
+  async refund(id: string, dto: RefundPaymentDto): Promise<PaymentDto> {
+    const existing = await this.getOrThrow(id);
+
+    if (existing.status === PaymentStatus.REFUNDED) {
+      throw AppException.conflict('This payment is already refunded');
+    }
+    if (existing.status !== PaymentStatus.VERIFIED) {
+      throw AppException.conflict(
+        'Only a verified payment can be refunded. A pending payment was ' +
+          'never collected, and a rejected one never counted.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await lockRow(tx, 'studentFee', existing.studentFeeId);
+
+      // Conditional on the status we read, so two people refunding at once
+      // cannot both succeed and recompute against each other.
+      const { count } = await tx.payment.updateMany({
+        where: { id, status: PaymentStatus.VERIFIED },
+        data: {
+          status: PaymentStatus.REFUNDED,
+          refundReason: dto.reason,
+          refundedAt: dto.refundedAt ?? new Date(),
+          refundedByMembershipId:
+            RequestContext.getAuth()?.membershipId ?? null,
+        },
+      });
+      if (count === 0) {
+        throw AppException.conflict('This payment is no longer verified');
+      }
+
+      await this.recalculateInvoice(tx, existing.studentFeeId);
+    });
+
+    const refunded = await this.findOne(id);
+    await this.notifications.notifyParentsOf([
+      {
+        studentId: refunded.studentId,
+        draft: {
+          type: NotificationType.PAYMENT_REFUNDED,
+          title: 'Payment refunded',
+          body: `${naira(refunded.amount)} for ${refunded.studentName} has been refunded: ${dto.reason}. The amount is outstanding on the invoice again.`,
+          data: { paymentId: refunded.id },
+        },
+      },
+    ]);
+    return refunded;
   }
 
   async list(query: QueryPaymentsDto): Promise<PaginatedDto<PaymentDto>> {

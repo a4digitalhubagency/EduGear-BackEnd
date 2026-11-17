@@ -236,6 +236,15 @@ Conventions established across Phases 1 and 2, worth following:
 - **An issued invoice is immutable.** Line items are copied onto it at assignment; structure amounts
   are frozen once invoices exist. Retire a category or archive a structure instead of editing it.
 - Waived and cancelled invoices are never counted as debts.
+- **A refund is a status change, not a reversing entry.** Refunds are settled by the school with the
+  parent off EduGear — fees go straight to the school's bank, so there is nothing here to reverse —
+  and `PaymentsService.refund` records it by moving the payment out of `VERIFIED`. Because invoices
+  recompute from their verified payments, the balance returns by itself. `REFUNDED` is deliberately
+  **not** `REJECTED`: a rejected payment never counted, a refunded one was collected, receipted and
+  counted, then returned, and a school reconciling a bank statement has to tell those apart. Only a
+  verified payment can be refunded. The refunded payment keeps its receipt number and still appears
+  on the statement — as the original credit *and* a `REFUND` debit, because filtering it out leaves a
+  parent's balance climbing with nothing on the page to explain it.
 
 ### Scoping beyond permissions (Phases 3–4)
 
