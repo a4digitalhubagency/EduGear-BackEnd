@@ -1,4 +1,4 @@
-import { PlatformRole, UserStatus } from '@prisma/client';
+import { MembershipStatus, PlatformRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import {
   closeTestApp,
@@ -442,6 +442,66 @@ describe('Platform console', () => {
     for (const leak of ['students', 'invoices', 'payments', 'results']) {
       expect(serialised).not.toContain(`"${leak}"`);
     }
+  });
+
+  // Parents hold memberships, so an unfiltered count of ACTIVE memberships
+  // reported them to A4 as staff — both per school and across the platform.
+  // The membership is made directly: the invitation flow is portal.e2e-spec's
+  // subject, and what is under test here is only how such a row is counted.
+  it('counts staff without counting parents', async () => {
+    const token = await platformLogin('ops@a4.test', PlatformRole.OWNER);
+
+    const before = await ctx
+      .http()
+      .get('/api/platform/stats')
+      .set(bearer(token))
+      .expect(200);
+    const beforeRow = (
+      await ctx
+        .http()
+        .get('/api/platform/schools')
+        .set(bearer(token))
+        .expect(200)
+    ).body.data.find((r: { id: string }) => r.id === school.schoolId);
+
+    const parentRole = await ctx.db.role.findFirstOrThrow({
+      where: { schoolId: school.schoolId, slug: 'PARENT' },
+    });
+    const parent = await ctx.db.user.create({
+      data: {
+        email: 'emeka@counts.test',
+        firstName: 'Emeka',
+        lastName: 'Parent',
+        passwordHash: await argon2.hash(PASSWORD, { type: argon2.argon2id }),
+        status: UserStatus.ACTIVE,
+        emailVerifiedAt: new Date(),
+      },
+    });
+    await ctx.db.membership.create({
+      data: {
+        userId: parent.id,
+        schoolId: school.schoolId,
+        roleId: parentRole.id,
+        status: MembershipStatus.ACTIVE,
+        acceptedAt: new Date(),
+      },
+    });
+
+    const after = await ctx
+      .http()
+      .get('/api/platform/stats')
+      .set(bearer(token))
+      .expect(200);
+    expect(after.body.totalStaff).toBe(before.body.totalStaff);
+
+    const afterRow = (
+      await ctx
+        .http()
+        .get('/api/platform/schools')
+        .set(bearer(token))
+        .expect(200)
+    ).body.data.find((r: { id: string }) => r.id === school.schoolId);
+    expect(afterRow.staffCount).toBe(beforeRow.staffCount);
   });
 
   it('searches and filters by status', async () => {

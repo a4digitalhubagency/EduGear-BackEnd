@@ -18,6 +18,7 @@ import { PlatformAdminService } from '../platform/platform-admin.service';
 import { RolesService } from '../tenants/roles.service';
 import { PasswordService } from '../auth/password.service';
 import { TokenService } from '../auth/token.service';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
 import { EmailService } from '../notifications/email.service';
@@ -32,6 +33,36 @@ import {
 type MembershipWithRelations = Prisma.MembershipGetPayload<{
   include: { user: true; role: true };
 }>;
+
+/**
+ * Staff, as distinct from parents.
+ *
+ * Both are memberships, so "every membership at this school" is not the staff
+ * list. Inviting a guardian to the portal put her in Personnel with the role
+ * Parent and counted her in Total Staff, and she could be edited into a
+ * Teacher from the staff screen.
+ *
+ * The discriminator is the permission, not the role slug. Slugs are per-school
+ * data a school can retune, whereas `portal.access` is already what marks a
+ * portal role: `assertMayAssign` exempts it precisely because no member of
+ * staff holds it.
+ *
+ * It also gets the teacher who is also a parent here right. That person has
+ * one membership carrying a staff role — see portal.guard.ts, which is why
+ * they can open the portal at all — so they stay in the staff list, where they
+ * belong. Filtering on "has a Guardian record" would wrongly hide them.
+ *
+ * Applied as a `where` fragment rather than by discarding rows afterwards, so
+ * `meta.total` and the page boundaries agree with the rows, and so the single
+ * reads below answer 404 for a parent without a second check.
+ */
+const STAFF_ONLY: Prisma.MembershipWhereInput = {
+  role: {
+    permissions: {
+      none: { permission: { key: PERMISSIONS.PORTAL_ACCESS } },
+    },
+  },
+};
 
 @Injectable()
 export class UsersService {
@@ -52,6 +83,7 @@ export class UsersService {
   /** Staff of the current school. Tenant filtering comes from the Prisma guard. */
   async list(query: QueryUsersDto): Promise<PaginatedDto<StaffMemberDto>> {
     const where: Prisma.MembershipWhereInput = {
+      ...STAFF_ONLY,
       ...(query.status ? { status: query.status } : {}),
       ...(query.roleId ? { roleId: query.roleId } : {}),
       ...(query.search
@@ -93,7 +125,7 @@ export class UsersService {
 
   async findOne(membershipId: string): Promise<StaffMemberDto> {
     const membership = await this.prisma.membership.findFirst({
-      where: { id: membershipId },
+      where: { id: membershipId, ...STAFF_ONLY },
       include: { user: true, role: true },
     });
     if (!membership) throw AppException.notFound('Staff member');
@@ -319,7 +351,7 @@ export class UsersService {
     auth: AuthContext,
   ): Promise<StaffMemberDto> {
     const current = await this.prisma.membership.findFirst({
-      where: { id: membershipId },
+      where: { id: membershipId, ...STAFF_ONLY },
       include: { user: true, role: true },
     });
     if (!current) throw AppException.notFound('Staff member');
@@ -383,7 +415,7 @@ export class UsersService {
   /** Revokes school access without deleting the person's global account. */
   async revokeAccess(membershipId: string, auth: AuthContext): Promise<void> {
     const membership = await this.prisma.membership.findFirst({
-      where: { id: membershipId },
+      where: { id: membershipId, ...STAFF_ONLY },
       include: { user: true, role: true },
     });
     if (!membership) throw AppException.notFound('Staff member');
