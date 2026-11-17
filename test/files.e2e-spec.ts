@@ -741,39 +741,77 @@ describe('File uploads', () => {
       // happen to overlap, and the transaction is short by design. This proves
       // the primitive underneath it instead, deterministically: hold the lock
       // and watch who waits.
+      //
+      // Nothing here sleeps for a fixed interval waiting on the database. An
+      // earlier version gave the holder 100ms to take the lock, which under a
+      // full-suite run was sometimes not long enough — and when the assertions
+      // then failed, the holding transaction was never awaited and kept the
+      // lock while the next test tried to check a quota, turning one flake into
+      // a 500 somewhere else entirely. The holder now signals when it actually
+      // holds the lock, and is released and awaited in a finally.
       const mine = advisoryLockKey('storageQuota', school.schoolId);
       const theirs = advisoryLockKey('storageQuota', other.schoolId);
       expect(mine).not.toEqual(theirs);
 
+      const take = (tx: {
+        $executeRawUnsafe: (q: string) => Promise<number>;
+      }) =>
+        tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock(${mine.toString()}::bigint)`,
+        );
+
+      let held!: () => void;
+      let release!: () => void;
+      const holding = new Promise<void>((resolve) => (held = resolve));
+      const releasing = new Promise<void>((resolve) => (release = resolve));
+
       let released = false;
-      const holder = ctx.db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `SELECT pg_advisory_xact_lock(${mine.toString()}::bigint)`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        released = true;
-      });
+      // Generous: this transaction is deliberately held open across awaits,
+      // and the default five seconds is about the database, not about us.
+      const holder = ctx.db.$transaction(
+        async (tx) => {
+          await take(tx);
+          held();
+          await releasing;
+          released = true;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
 
-      // Long enough that the lock is certainly held before either attempt.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      try {
+        // No guessing: the lock is provably held before anything is asserted.
+        await holding;
 
-      // Another school's key is a different lock, so this must not wait.
-      await ctx.db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `SELECT pg_advisory_xact_lock(${theirs.toString()}::bigint)`,
-        );
-      });
-      expect(released).toBe(false);
+        // Another school's key is a different lock, so this must not wait.
+        await ctx.db.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(
+            `SELECT pg_advisory_xact_lock(${theirs.toString()}::bigint)`,
+          );
+        });
+        expect(released).toBe(false);
 
-      // The same school's key does wait, and only proceeds once it is freed.
-      await ctx.db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `SELECT pg_advisory_xact_lock(${mine.toString()}::bigint)`,
-        );
-      });
-      expect(released).toBe(true);
+        // The same school's key must block while the holder has it.
+        const waiter = ctx.db.$transaction(async (tx) => take(tx), {
+          timeout: 30_000,
+          maxWait: 10_000,
+        });
+        const settledWhileHeld = await Promise.race([
+          waiter.then(() => true),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 250),
+          ),
+        ]);
+        // A slow machine only makes this wait longer, never pass wrongly.
+        expect(settledWhileHeld).toBe(false);
 
-      await holder;
+        release();
+        await waiter;
+        expect(released).toBe(true);
+      } finally {
+        // Whatever happened above, the lock must not outlive this test.
+        release();
+        await holder.catch(() => undefined);
+      }
     });
 
     it('frees the space again when a file is deleted', async () => {

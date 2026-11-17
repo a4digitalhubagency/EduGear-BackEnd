@@ -40,13 +40,22 @@ npx jest src/auth/password.service.spec.ts
 npx jest --config ./test/jest-e2e.json --runInBand -t "cannot read another school"
 ```
 
+**Empty, not deleted — that distinction is the whole protection.** Deleting a variable leaves a hole
+that anything loading `.env` later will fill, and something does: importing `src/app.module` pulls in
+Prisma Client, which reads `.env` on import, long after `setup-env` has run. For months that handed
+the real R2 credentials back and the whole suite uploaded its fixtures to the live bucket, failing
+intermittently on that bucket's network errors — which read as a flaky quota test. Every loader
+involved declines to overwrite a variable that is already *present*, so an empty value sticks, and
+`StorageService` treats a blank credential as absent. `createTestApp` asserts the driver really is
+`local` and fails the run otherwise, so this cannot come undone silently again.
+
 Integration tests pin Redis to **logical database 1** ([test/utils/redis-url.ts](test/utils/redis-url.ts))
 and flush it in global setup. Rate-limit counters outlive a run (60s and 1h TTLs), so without the flush
 a second run inside the window fails — and flushing db 0 would wipe a developer's local cache.
 
 `test/global-setup.ts` runs `prisma migrate deploy` against `TEST_DATABASE_URL` once per e2e run, and
-[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database, **deletes the
-`R2_*` and `SENTRY_DSN` variables** so a developer with real credentials in `.env` cannot have the
+[test/setup-env.ts](test/setup-env.ts) forces `DATABASE_URL` to the test database, **sets the `R2_*`
+and `SENTRY_DSN` variables to empty** so a developer with real credentials in `.env` cannot have the
 suite write fixtures into a live bucket or file issues in the real Sentry project, and raises throttle
 limits — so most suites are unaffected by rate limiting, except
 [test/rate-limit.e2e-spec.ts](test/rate-limit.e2e-spec.ts), which sets its own limits before loading
@@ -111,6 +120,14 @@ compare), and only then is the address believed. **No secret, a wrong secret, or
 an address falls back to the socket address** — narrower, never wider. Keys are namespaced
 (`fwd:` / `ip:`) so a direct caller cannot spend a real user's budget by claiming their address.
 
+That fallback is only as good as `req.ip`, which is why `TRUSTED_PROXY_HOPS` in
+[http-settings.ts](src/http-settings.ts) is **2, not 1**. Railway strips the caller's
+`X-Forwarded-For` and rewrites it as `<real client>, <railway edge>`, so the client is the second
+entry from the right. At 1, `req.ip` was the edge — and Railway rotates between PoPs mid-session, so
+one client collected a budget per PoP and never reached a limit while strangers behind one PoP
+throttled each other. Every `SessionMeta.ip` on a login record was the edge's address too. **Put a
+CDN or WAF in front and this number goes up with it**; `rate-limit.e2e-spec.ts` fails if it does not.
+
 Route metadata comes from [src/common/decorators/index.ts](src/common/decorators/index.ts):
 `@Public()`, `@RequirePermissions(...)`, `@AllowNoTenant()`, `@CurrentUser()`, `@CurrentSchool()`.
 `PermissionsGuard` is also the last line of tenant defence — it rejects any authenticated request that
@@ -155,10 +172,23 @@ are **copied into each school** at provisioning so a school can retune its own r
   without it. Never make that fallback reachable in production. Refresh tokens stay in Postgres.
 - Redis failures must not break requests: cache reads fall through to the database, writes are logged.
   A failed *invalidation* is logged at error level because it leaves stale permissions until the TTL.
-- Migrations: `prisma migrate deploy` as a release step — [railway.json](railway.json)'s
-  `preDeployCommand`, never on container boot. **Verify Railway's dashboard actually has it**:
-  the file was ignored on the first service, so migrations silently never ran and, with the
-  healthcheck also unset, every broken deploy still reported success; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+- Migrations: `prisma migrate deploy` as a release step — the `preDeployCommand` in
+  [.railway/railway.ts](.railway/railway.ts), never on container boot. **Verify Railway's dashboard
+  actually has it**: the config was ignored on the first service, so migrations silently never ran
+  and, with the healthcheck also unset, every broken deploy still reported success; `prisma db push`
+  is never used against production.
+- **Railway's dashboard is authoritative for deploy settings; the repo only records them.**
+  `railway.json` was applied by pushing a commit, and stops being read on 1 December 2026. Its
+  replacement is not `.railway/railway.ts` — Railway does not read that during a deploy either, and
+  the Railway CLI is deliberately not used here (the account carries other organisations' work). The
+  settings are entered by hand in the service, **per environment**, following
+  [docs/railway-service-settings.md](docs/railway-service-settings.md).
+  `.railway/railway.ts` is the typechecked record of those values: `npm run typecheck:railway`
+  compiles it against Railway's own types (CI runs it), so the record cannot drift into field names
+  that do not exist — a prose comment claiming the restart policy is `ON_FAILUER` would survive
+  review, that file would not. It proves the names are real, **not** that they match what Railway is
+  running; change one in the dashboard, change it there too. The root tsconfig covers
+  `src`/`test`/`prisma` only, which is why it has a tsconfig of its own. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
@@ -250,6 +280,25 @@ logged-in user, so it has its own rules:
   receipt numbering, invoice recomputation and notification. Do not write a second verification path.
 - A pending online attempt counts against the invoice ceiling, so `sweepAbandoned` clears stale ones —
   but only after the provider confirms they were never collected.
+- **Fees settle into the school's own bank, never EduGear's.** Each school has a Paystack subaccount
+  ([settlement.service.ts](src/finance/paystack/settlement.service.ts)); `initialize` sends
+  `subaccount` and `bearer: 'subaccount'` on every transaction. Both matter: `percentage_charge` on a
+  subaccount is the **main** account's cut, so `PLATFORM_PERCENTAGE_CHARGE = 0` is what leaves the
+  whole fee with the school — reading it as the subaccount's share would hand every naira to the
+  wrong party — and `bearer` **defaults to `account`**, so omitting it makes EduGear pay every
+  school's Paystack charges.
+- **A school with no subaccount cannot take cards.** There is no fallback, because the only fallback
+  is settling into EduGear's account — holding other businesses' revenue, which is the thing this
+  design exists to prevent. The refusal happens before a payment row is created.
+- **Both routes to VERIFIED check where the money went.** The webhook and `refresh` are parallel
+  paths; a guard on one is not a guard. Each compares the settling subaccount against the school's
+  own, behind a null check — Paystack's payload has not been observed carrying the field in this
+  integration, and failing closed on an unconfirmed field would reject every real payment. Tighten it
+  to required once staging shows the field arriving.
+- **The account number is never stored.** Paystack holds it; a subaccount is updated by its code. We
+  keep the bank, the name the bank returned and the last four digits, which is what a bursar needs to
+  recognise the account. The platform console sees only *whether* settlement is configured — it is
+  metadata-only and sees no money, and a bank account is what that rule is for.
 
 ### The platform console (A4's own surface)
 

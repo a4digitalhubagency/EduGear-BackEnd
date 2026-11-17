@@ -11,6 +11,7 @@ import { toAmount } from '../fee-math';
 import { PaymentsService } from '../payments.service';
 import { StartOnlinePaymentDto } from '../dto/payment.dto';
 import { PaystackClient } from './paystack.client';
+import { canAcceptOnlinePayments, FEE_BEARER } from './settlement';
 import {
   isValidSignature,
   parseChargeEvent,
@@ -79,6 +80,7 @@ export class PaystackService {
     schoolId: string,
   ): Promise<StartedPaymentDto> {
     this.assertAvailable();
+    const subaccount = await this.settlementSubaccount();
     await this.sweepAbandoned(dto.studentFeeId);
 
     const payment = await this.payments.record(
@@ -110,6 +112,12 @@ export class PaystackService {
           schoolId,
           studentId: payment.studentId,
         },
+        // The money settles in the school's own bank, and the school carries
+        // Paystack's charge. Both are sent on every transaction: `bearer`
+        // defaults to the main account, so omitting it would have EduGear
+        // paying the fees on every school's tuition.
+        subaccount,
+        bearer: FEE_BEARER,
       });
 
       return {
@@ -225,6 +233,41 @@ export class PaystackService {
         return 'mismatch';
       }
 
+      // The tenant already comes from the reference rather than the payload,
+      // so this is defence in depth: money that settled into some other
+      // school's bank must not mark this school's invoice paid.
+      //
+      // Guarded on the payload naming a subaccount at all. Paystack's verify
+      // response has not been observed carrying one in this integration yet,
+      // and a check that fails closed on a field we have not confirmed would
+      // reject every real payment. Once staging shows the field arriving,
+      // tighten this to require it.
+      const settlingTo = await this.subaccountOf(payment.schoolId);
+      if (
+        event.subaccountCode !== null &&
+        settlingTo !== null &&
+        event.subaccountCode !== settlingTo
+      ) {
+        this.logger.error(
+          `Paystack settled ${event.reference} to ${event.subaccountCode}, but payment ${payment.id} belongs to a school settling to ${settlingTo} — left pending`,
+        );
+        await this.audit.record({
+          action: AUDIT_ACTIONS.PAYMENT_ONLINE_MISMATCH,
+          entityType: 'Payment',
+          entityId: payment.id,
+          description: `Paystack settled to ${event.subaccountCode}; this school settles to ${settlingTo}`,
+          metadata: {
+            reference: event.reference,
+            reportedSubaccount: event.subaccountCode,
+            expectedSubaccount: settlingTo,
+          },
+          schoolId: payment.schoolId,
+          actorUserId: null,
+          membershipId: null,
+        });
+        return 'mismatch';
+      }
+
       // From here the work belongs to that school, with no user behind it.
       return await RequestContext.runForSchool(payment.schoolId, async () => {
         try {
@@ -266,6 +309,7 @@ export class PaystackService {
         status: true,
         amount: true,
         providerReference: true,
+        schoolId: true,
       },
     });
     if (!payment) throw AppException.notFound('Payment');
@@ -291,6 +335,22 @@ export class PaystackService {
       return { status: PaymentStatus.PENDING };
     }
 
+    // The same destination check the webhook makes. This path is a parallel
+    // route to VERIFIED, so a guard on only one of them is not a guard: a
+    // payment that settled into another school's bank would be marked paid by
+    // whichever of the two happened to run.
+    const settlingTo = await this.subaccountOf(payment.schoolId);
+    if (
+      result.subaccountCode !== null &&
+      settlingTo !== null &&
+      result.subaccountCode !== settlingTo
+    ) {
+      this.logger.error(
+        `Paystack settled payment ${payment.id} to ${result.subaccountCode}, not this school's ${settlingTo}; leaving it pending`,
+      );
+      return { status: PaymentStatus.PENDING };
+    }
+
     try {
       await this.payments.verify(payment.id);
     } catch (error) {
@@ -301,6 +361,44 @@ export class PaystackService {
   }
 
   // ---------------------------------------------------------------------------
+
+  /**
+   * The school's settlement account, or a refusal.
+   *
+   * There is no fallback here on purpose. A transaction initialised without a
+   * subaccount settles into EduGear's own Paystack account, which would mean
+   * holding other schools' fee income — the single outcome this whole design
+   * exists to prevent. A school that has not set up settlement simply cannot
+   * take cards yet, and is told so in those terms.
+   */
+  private async settlementSubaccount(): Promise<string> {
+    const school = await this.prisma.school.findFirstOrThrow({
+      select: { paystackSubaccountCode: true },
+    });
+
+    if (!canAcceptOnlinePayments(school.paystackSubaccountCode)) {
+      throw AppException.conflict(
+        'This school has not set up a settlement account yet, so online ' +
+          'payments cannot be taken. Add your bank account in Settings.',
+      );
+    }
+
+    return school.paystackSubaccountCode as string;
+  }
+
+  /**
+   * Read without a tenant: `settle` resolves the school from the reference,
+   * and runs before `runForSchool` opens the context.
+   */
+  private async subaccountOf(schoolId: string): Promise<string | null> {
+    const school = await RequestContext.runAsSystem(() =>
+      this.prisma.school.findUnique({
+        where: { id: schoolId },
+        select: { paystackSubaccountCode: true },
+      }),
+    );
+    return school?.paystackSubaccountCode ?? null;
+  }
 
   private assertAvailable(): void {
     if (!this.available) {

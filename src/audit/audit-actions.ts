@@ -18,6 +18,7 @@ export const AUDIT_ACTIONS = {
   SCHOOL_REGISTERED: 'school.registered',
   SCHOOL_UPDATED: 'school.updated',
   SCHOOL_SETTINGS_UPDATED: 'school.settings.updated',
+  SCHOOL_SETTLEMENT_UPDATED: 'school.settlement.updated',
   FILE_UPLOADED: 'file.uploaded',
   FILE_DELETED: 'file.deleted',
 

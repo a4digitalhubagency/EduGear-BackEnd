@@ -39,16 +39,28 @@ process.env.STORAGE_LOCAL_DIR = path.join(
 // its ELF headers, fake JPEGs and multi-megabyte quota fixtures into a real
 // bucket. Same reasoning as forcing DATABASE_URL above: the tests get a
 // throwaway, never the live thing.
+//
+// Emptied rather than deleted, and the difference matters. Deleting them left a
+// hole that anything loading .env later would fill, and something does:
+// importing src/app.module pulls in Prisma Client, which reads .env on import,
+// long after this file has run. A developer with real credentials in .env had
+// the whole integration suite writing its fixtures into the live bucket and
+// failing on that bucket's network errors, which read as flaky tests.
+//
+// An empty value cannot be refilled, because every loader involved declines to
+// overwrite a variable that is already present, and StorageService treats a
+// blank credential as absent. test-app.ts asserts the driver that results, so
+// this cannot quietly come undone again.
 for (const key of [
   'R2_BUCKET',
   'R2_ACCOUNT_ID',
   'R2_ACCESS_KEY_ID',
   'R2_SECRET_ACCESS_KEY',
+  // Likewise: a test run must never file issues in the real Sentry project.
+  'SENTRY_DSN',
 ]) {
-  delete process.env[key];
+  process.env[key] = '';
 }
-// Likewise: a test run must never file issues in the real Sentry project.
-delete process.env.SENTRY_DSN;
 
 process.env.EMAIL_PROVIDER = 'console';
 // Rate limiting has a dedicated suite (rate-limit.e2e-spec.ts, which sets its own
