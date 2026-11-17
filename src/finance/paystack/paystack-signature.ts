@@ -38,6 +38,12 @@ export interface PaystackChargeEvent {
   status: string;
   paidAt: Date | null;
   channel: string | null;
+  /**
+   * Which subaccount the money split to, when the payload says. Null means
+   * the payload did not name one — not that none was used — so a caller
+   * comparing it must guard on that before treating a difference as wrong.
+   */
+  subaccountCode: string | null;
 }
 
 /** Reads the fields we act on, and nothing else. Unknown shapes return null. */
@@ -75,7 +81,21 @@ export function parseChargeEvent(body: unknown): PaystackChargeEvent | null {
     status: typeof data.status === 'string' ? data.status : 'unknown',
     paidAt: paidAt && !Number.isNaN(paidAt.getTime()) ? paidAt : null,
     channel: typeof data.channel === 'string' ? data.channel : null,
+    subaccountCode: readSubaccountCode(data.subaccount),
   };
+}
+
+/**
+ * Paystack has sent `subaccount` as an object and, on some events, as the bare
+ * code. Anything else — absent, null, a number — reads as "not stated", which
+ * the caller treats as no claim rather than as a mismatch.
+ */
+function readSubaccountCode(value: unknown): string | null {
+  if (typeof value === 'string') return value === '' ? null : value;
+  if (typeof value !== 'object' || value === null) return null;
+
+  const code = (value as { subaccount_code?: unknown }).subaccount_code;
+  return typeof code === 'string' && code !== '' ? code : null;
 }
 
 /** Naira to the kobo Paystack works in, without floating-point drift. */

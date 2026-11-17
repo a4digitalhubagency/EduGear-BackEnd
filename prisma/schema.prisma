@@ -113,6 +113,20 @@ model School {
   /// Upload ceiling in megabytes, set by A4 rather than by the school. Null
   /// means the platform default — a school must not be able to raise its own.
   storageQuotaMb Int?
+
+  /// Paystack subaccount this school's fees settle into, so money goes to the
+  /// school's own bank and never through EduGear's account. Null means online
+  /// payments are refused: the alternative is settling into EduGear's account.
+  paystackSubaccountCode  String?
+  /// Enough to recognise the chosen account, and no more. The account number
+  /// itself is Paystack's to hold — a subaccount is updated by its code, so
+  /// nothing here needs to read it back.
+  settlementBankCode      String?
+  settlementBankName      String?
+  /// As the bank returned it, not as anyone typed it.
+  settlementAccountName   String?
+  settlementAccountLast4  String?
+
   /// Soft-delete marker; tenant data is never hard-deleted on cancellation.
   deletedAt   DateTime?
   createdAt   DateTime     @default(now())

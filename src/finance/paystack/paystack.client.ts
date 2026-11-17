@@ -14,6 +14,24 @@ export interface VerifiedTransaction {
   currency: string;
   paidAt: Date | null;
   channel: string | null;
+  /**
+   * The subaccount the money was split to, when the payload names one. Null
+   * means Paystack did not say — not that no subaccount was used — so a check
+   * against it belongs behind a null guard rather than in front of one.
+   */
+  subaccountCode: string | null;
+}
+
+export interface PaystackBank {
+  name: string;
+  code: string;
+  currency: string;
+}
+
+export interface ResolvedAccount {
+  accountNumber: string;
+  /** As the bank holds it. Never what the caller typed. */
+  accountName: string;
 }
 
 const BASE_URL = 'https://api.paystack.co';
@@ -44,6 +62,11 @@ export class PaystackClient {
     amountKobo: number;
     reference: string;
     metadata: Record<string, string>;
+    /** The school's subaccount. Fees settle there, never here. */
+    subaccount: string;
+    /** Who pays Paystack's charge. Defaults to the main account, so it is
+     * always sent: omitting it makes EduGear pay every school's fees. */
+    bearer: 'account' | 'subaccount';
   }): Promise<InitializedTransaction> {
     const callbackUrl = this.config.get('paystack', {
       infer: true,
@@ -63,6 +86,8 @@ export class PaystackClient {
         reference: params.reference,
         currency: 'NGN',
         metadata: params.metadata,
+        subaccount: params.subaccount,
+        bearer: params.bearer,
         ...(callbackUrl ? { callback_url: callbackUrl } : {}),
       }),
     });
@@ -83,6 +108,7 @@ export class PaystackClient {
         currency: string;
         paid_at?: string;
         channel?: string;
+        subaccount?: { subaccount_code?: string } | null;
       };
     }>(`/transaction/verify/${encodeURIComponent(reference)}`, {
       method: 'GET',
@@ -95,7 +121,89 @@ export class PaystackClient {
       currency: body.data.currency,
       paidAt: paidAt && !Number.isNaN(paidAt.getTime()) ? paidAt : null,
       channel: body.data.channel ?? null,
+      subaccountCode: body.data.subaccount?.subaccount_code ?? null,
     };
+  }
+
+  /** Populates the bank picker. The list changes rarely; the caller caches it. */
+  async listBanks(): Promise<PaystackBank[]> {
+    const body = await this.call<{
+      data: Array<{ name: string; code: string; currency: string }>;
+    }>('/bank?currency=NGN', { method: 'GET' });
+
+    return body.data.map((bank) => ({
+      name: bank.name,
+      code: bank.code,
+      currency: bank.currency,
+    }));
+  }
+
+  /**
+   * Asks the bank who owns an account, so a school confirms a name rather than
+   * trusting ten digits it typed. A transposed digit that happens to be a real
+   * account is otherwise only discovered by somebody else receiving the fees.
+   */
+  async resolveAccount(
+    accountNumber: string,
+    bankCode: string,
+  ): Promise<ResolvedAccount> {
+    const query = new URLSearchParams({
+      account_number: accountNumber,
+      bank_code: bankCode,
+    });
+    const body = await this.call<{
+      data: { account_number: string; account_name: string };
+    }>(`/bank/resolve?${query.toString()}`, { method: 'GET' });
+
+    return {
+      accountNumber: body.data.account_number,
+      accountName: body.data.account_name,
+    };
+  }
+
+  async createSubaccount(params: {
+    businessName: string;
+    bankCode: string;
+    accountNumber: string;
+    percentageCharge: number;
+  }): Promise<string> {
+    const body = await this.call<{ data: { subaccount_code: string } }>(
+      '/subaccount',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          business_name: params.businessName,
+          settlement_bank: params.bankCode,
+          account_number: params.accountNumber,
+          // Paystack reads this as the MAIN account's cut, not the
+          // subaccount's share. Zero is what leaves the whole fee with the
+          // school.
+          percentage_charge: params.percentageCharge,
+        }),
+      },
+    );
+    return body.data.subaccount_code;
+  }
+
+  /** Moving a school's settlement to a different bank account. */
+  async updateSubaccount(
+    subaccountCode: string,
+    params: {
+      businessName: string;
+      bankCode: string;
+      accountNumber: string;
+      percentageCharge: number;
+    },
+  ): Promise<void> {
+    await this.call(`/subaccount/${encodeURIComponent(subaccountCode)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        business_name: params.businessName,
+        settlement_bank: params.bankCode,
+        account_number: params.accountNumber,
+        percentage_charge: params.percentageCharge,
+      }),
+    });
   }
 
   private async call<T>(path: string, init: RequestInit): Promise<T> {

@@ -15,6 +15,8 @@ import { PaymentsService } from './payments.service';
 import { PaystackClient } from './paystack/paystack.client';
 import { PaystackController } from './paystack/paystack.controller';
 import { PaystackService } from './paystack/paystack.service';
+import { SettlementController } from './paystack/settlement.controller';
+import { SettlementService } from './paystack/settlement.service';
 import { PaystackWebhookController } from './paystack/paystack-webhook.controller';
 import { StudentFeesController } from './student-fees.controller';
 import { StudentFeesService } from './student-fees.service';
@@ -29,6 +31,7 @@ import { StudentFeesService } from './student-fees.service';
     FinanceReportsController,
     FinanceDocumentsController,
     PaystackController,
+    SettlementController,
     PaystackWebhookController,
   ],
   providers: [
@@ -41,6 +44,7 @@ import { StudentFeesService } from './student-fees.service';
     FinanceDocumentsService,
     PaystackClient,
     PaystackService,
+    SettlementService,
   ],
   exports: [
     FeeCategoriesService,
