@@ -73,6 +73,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # The Railway config is code now, and nothing else compiles it: the root
+      # tsconfig covers src/test/prisma only. Without this, a typo in the
+      # pre-deploy command or the healthcheck path reaches a deploy unnoticed.
+      - name: Typecheck Railway config
+        run: npm run typecheck:railway
+
       - name: Unit tests
         run: npm test
 

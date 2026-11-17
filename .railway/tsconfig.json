@@ -1,0 +1,13 @@
+{
+  "//": "The root tsconfig is CommonJS with node resolution and covers src/test/prisma only. The railway package publishes an exports map, which node resolution cannot read, so this file is typechecked on its own terms.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["railway.ts"]
+}

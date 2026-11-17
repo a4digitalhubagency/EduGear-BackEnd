@@ -172,10 +172,23 @@ are **copied into each school** at provisioning so a school can retune its own r
   without it. Never make that fallback reachable in production. Refresh tokens stay in Postgres.
 - Redis failures must not break requests: cache reads fall through to the database, writes are logged.
   A failed *invalidation* is logged at error level because it leaves stale permissions until the TTL.
-- Migrations: `prisma migrate deploy` as a release step — [railway.json](railway.json)'s
-  `preDeployCommand`, never on container boot. **Verify Railway's dashboard actually has it**:
-  the file was ignored on the first service, so migrations silently never ran and, with the
-  healthcheck also unset, every broken deploy still reported success; `prisma db push` is never used against production. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+- Migrations: `prisma migrate deploy` as a release step — the `preDeployCommand` in
+  [.railway/railway.ts](.railway/railway.ts), never on container boot. **Verify Railway's dashboard
+  actually has it**: the config was ignored on the first service, so migrations silently never ran
+  and, with the healthcheck also unset, every broken deploy still reported success; `prisma db push`
+  is never used against production.
+- **Railway's dashboard is authoritative for deploy settings; the repo only records them.**
+  `railway.json` was applied by pushing a commit, and stops being read on 1 December 2026. Its
+  replacement is not `.railway/railway.ts` — Railway does not read that during a deploy either, and
+  the Railway CLI is deliberately not used here (the account carries other organisations' work). The
+  settings are entered by hand in the service, **per environment**, following
+  [docs/railway-service-settings.md](docs/railway-service-settings.md).
+  `.railway/railway.ts` is the typechecked record of those values: `npm run typecheck:railway`
+  compiles it against Railway's own types (CI runs it), so the record cannot drift into field names
+  that do not exist — a prose comment claiming the restart policy is `ON_FAILUER` would survive
+  review, that file would not. It proves the names are real, **not** that they match what Railway is
+  running; change one in the dashboard, change it there too. The root tsconfig covers
+  `src`/`test`/`prisma` only, which is why it has a tsconfig of its own. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
