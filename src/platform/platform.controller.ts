@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
+  ApiAcceptedResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
@@ -21,7 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { PlatformRole } from '@prisma/client';
 import type { Request } from 'express';
-import { AUTH_THROTTLE } from '../common/constants/throttle';
+import { AUTH_THROTTLE, STRICT_THROTTLE } from '../common/constants/throttle';
 import {
   AllowNoTenant,
   Public,
@@ -35,6 +36,8 @@ import {
   RefreshTokenDto,
 } from '../auth/dto/auth.dto';
 import {
+  ChangeEmailDto,
+  ConfirmEmailChangeDto,
   GrantPlatformAccessDto,
   PlatformAdminDto,
   PlatformLoginDto,
@@ -164,6 +167,44 @@ export class PlatformController {
   // -------------------------------------------------------------------------
   // Tenants
   // -------------------------------------------------------------------------
+
+  @Post('auth/change-email')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  // Verifies a password and sends mail, so it carries the tighter budget.
+  @Throttle(STRICT_THROTTLE)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: 'Ask to move this operator account to a different address',
+    description:
+      'Confirmation is sent to the NEW address, not the current one, so a ' +
+      'mistyped address changes nothing. Nothing moves until that link is ' +
+      'opened.',
+  })
+  @ApiAcceptedResponse({ type: MessageDto })
+  async changeEmail(@Body() dto: ChangeEmailDto): Promise<MessageDto> {
+    await this.auth.requestEmailChange(dto);
+    return {
+      message:
+        'Check the new address for a confirmation link. Nothing changes until it is opened.',
+    };
+  }
+
+  @Post('auth/confirm-email')
+  @Public()
+  @Throttle(STRICT_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm a new operator email',
+    description:
+      'Public because it is opened from a mailbox, which is the proof: the ' +
+      'link was only ever sent to the address being moved to.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async confirmEmail(@Body() dto: ConfirmEmailChangeDto): Promise<MessageDto> {
+    await this.auth.confirmEmailChange(dto.token);
+    return { message: 'Email updated. Sign in with the new address.' };
+  }
 
   @Get('stats')
   @RequirePlatformRole(...ALL_ROLES)
