@@ -4,6 +4,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
+  IsNotEmpty,
   IsIn,
   IsInt,
   IsOptional,
@@ -159,4 +160,33 @@ export class PlatformStatsDto {
   @ApiProperty() storageBytes: number;
   @ApiProperty({ description: 'Schools registered in the last 30 days' })
   newSchoolsLast30Days: number;
+}
+
+export class ChangeEmailDto {
+  @ApiProperty({ description: 'Proves the account is yours before moving it' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  currentPassword: string;
+
+  @ApiProperty({
+    example: 'ops@a4technologies.ng',
+    description:
+      'Confirmation goes here, not to the current address \u2014 so a typo ' +
+      'changes nothing instead of stranding the account.',
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  @MaxLength(255)
+  newEmail: string;
+}
+
+export class ConfirmEmailChangeDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(256)
+  token: string;
 }

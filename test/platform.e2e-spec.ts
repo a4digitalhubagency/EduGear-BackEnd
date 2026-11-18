@@ -1,5 +1,6 @@
 import { MembershipStatus, PlatformRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { EmailService } from '../src/notifications/email.service';
 import {
   closeTestApp,
   createTestApp,
@@ -140,6 +141,151 @@ describe('Platform console', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Keeping a console session alive
+  // -------------------------------------------------------------------------
+
+  describe('the platform session', () => {
+    /** Signs in and hands back the whole token pair, not just the access one. */
+    async function session(email: string, role = PlatformRole.OWNER) {
+      await platformLogin(email, role);
+      const login = await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email, password: PASSWORD })
+        .expect(200);
+      return login.body.tokens as {
+        accessToken: string;
+        refreshToken: string;
+      };
+    }
+
+    it('exchanges a refresh token for a working pair', async () => {
+      // The access token lives fifteen minutes. Without this the console signs
+      // itself out every quarter hour and cannot recover.
+      const first = await session('refresh@a4.test');
+
+      const refreshed = await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(200);
+
+      expect(refreshed.body.admin.email).toBe('refresh@a4.test');
+      await ctx
+        .http()
+        .get('/api/platform/me')
+        .set(bearer(refreshed.body.tokens.accessToken))
+        .expect(200);
+    });
+
+    it('retires the old token, and treats replay as theft', async () => {
+      const first = await session('rotate@a4.test');
+      const second = await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(200);
+
+      // Used once, gone.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: first.refreshToken })
+        .expect(401);
+
+      // And replaying it burns the family, so a captured token cannot be used
+      // alongside the real session.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: second.body.tokens.refreshToken })
+        .expect(401);
+    });
+
+    it('refuses a school session at the console door', async () => {
+      // The whole reason this is a separate path: a staff refresh token must
+      // never come back as a platform session.
+      const staff = await ctx
+        .http()
+        .post('/api/auth/login')
+        .send({ email: school.email, password: school.password })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: staff.body.tokens.refreshToken })
+        .expect(401);
+
+      // ...and it is still a perfectly good school session afterwards, or
+      // anyone could log staff out by offering their token at the wrong door.
+      await ctx
+        .http()
+        .post('/api/auth/refresh')
+        .send({ refreshToken: staff.body.tokens.refreshToken })
+        .expect(200);
+    });
+
+    it('refuses a platform session at the school door', async () => {
+      const operator = await session('crossing@a4.test');
+      await ctx
+        .http()
+        .post('/api/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('stops refreshing the moment access is revoked', async () => {
+      const operator = await session('revoked-refresh@a4.test');
+
+      await ctx.db.platformAdmin.updateMany({
+        where: { user: { email: 'revoked-refresh@a4.test' } },
+        data: { disabledAt: new Date() },
+      });
+
+      // A refresh token lives thirty days; revocation has to bite now.
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('signs out, and the token cannot be used again', async () => {
+      const operator = await session('logout@a4.test');
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/logout')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+
+    it('drops refresh tokens when the password changes', async () => {
+      const operator = await session('pwrefresh@a4.test');
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/change-password')
+        .set(bearer(operator.accessToken))
+        .send({ currentPassword: PASSWORD, newPassword: 'PlatformPass789' })
+        .expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/refresh')
+        .send({ refreshToken: operator.refreshToken })
+        .expect(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // An operator's own password
   // -------------------------------------------------------------------------
 
@@ -230,6 +376,189 @@ describe('Platform console', () => {
       .set(bearer(token))
       .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD })
       .expect(403);
+  });
+
+  // -------------------------------------------------------------------------
+  // Moving an operator account to another address
+  // -------------------------------------------------------------------------
+
+  describe('changing the operator email', () => {
+    let sent: { to: string; token: string }[];
+    let warned: { to: string; newEmail: string }[];
+
+    beforeEach(() => {
+      sent = [];
+      warned = [];
+      jest
+        .spyOn(ctx.app.get(EmailService), 'sendPlatformEmailChange')
+        .mockImplementation((params) => {
+          sent.push({ to: params.to, token: params.token });
+          return Promise.resolve();
+        });
+      jest
+        .spyOn(ctx.app.get(EmailService), 'sendPlatformEmailChanged')
+        .mockImplementation((params) => {
+          warned.push({ to: params.to, newEmail: params.newEmail });
+          return Promise.resolve();
+        });
+    });
+
+    const request = (token: string, body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .post('/api/platform/auth/change-email')
+        .set(bearer(token))
+        .send(body);
+
+    const confirm = (token: string) =>
+      ctx.http().post('/api/platform/auth/confirm-email').send({ token });
+
+    it('sends the link to the new address, not the current one', async () => {
+      const token = await platformLogin('mover@a4.test', PlatformRole.OWNER);
+
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'moved@a4.test',
+      }).expect(202);
+
+      // The whole safety of the flow: confirming at the current address would
+      // confirm a typo and strand the account.
+      expect(sent).toHaveLength(1);
+      expect(sent[0].to).toBe('moved@a4.test');
+    });
+
+    it('changes nothing until the link is opened', async () => {
+      const token = await platformLogin('pending@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'notyet@a4.test',
+      }).expect(202);
+
+      // Still the old address, and still the address that signs in.
+      await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email: 'pending@a4.test', password: PASSWORD })
+        .expect(200);
+      await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email: 'notyet@a4.test', password: PASSWORD })
+        .expect(401);
+    });
+
+    it('moves the account once confirmed, and warns the old address', async () => {
+      const token = await platformLogin('before@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'after@a4.test',
+      }).expect(202);
+
+      await confirm(sent[0].token).expect(200);
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email: 'after@a4.test', password: PASSWORD })
+        .expect(200);
+      await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email: 'before@a4.test', password: PASSWORD })
+        .expect(401);
+
+      // The only warning the real owner gets if somebody else did this.
+      expect(warned).toEqual([
+        { to: 'before@a4.test', newEmail: 'after@a4.test' },
+      ]);
+    });
+
+    it('needs the current password', async () => {
+      const token = await platformLogin('nopw@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: 'NotMyPassword1',
+        newEmail: 'elsewhere@a4.test',
+      }).expect(401);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('refuses an address that already belongs to someone', async () => {
+      const token = await platformLogin('taken@a4.test', PlatformRole.OWNER);
+
+      // A member of staff: the two populations must not overlap.
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: school.email,
+      }).expect(409);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('refuses an address taken between asking and confirming', async () => {
+      const token = await platformLogin('race@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'contested@a4.test',
+      }).expect(202);
+
+      // Somebody else gets there first.
+      await ctx.db.user.create({
+        data: {
+          email: 'contested@a4.test',
+          firstName: 'Someone',
+          lastName: 'Else',
+          passwordHash: await argon2.hash(PASSWORD, { type: argon2.argon2id }),
+          status: UserStatus.ACTIVE,
+        },
+      });
+
+      const response = await confirm(sent[0].token).expect(409);
+      // Specifically ours, not the database's unique constraint surfacing as
+      // a conflict by accident: both are 409, so only the message proves the
+      // address was re-checked rather than the write simply failing.
+      expect(response.body.message).toMatch(/already belongs to an EduGear/i);
+      expect(response.body.errorCode).not.toBe('DUPLICATE_RESOURCE');
+
+      await ctx
+        .http()
+        .post('/api/platform/auth/login')
+        .send({ email: 'race@a4.test', password: PASSWORD })
+        .expect(200);
+    });
+
+    it('will not confirm after access is revoked', async () => {
+      const token = await platformLogin('losing@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'nowhere@a4.test',
+      }).expect(202);
+
+      await ctx.db.platformAdmin.updateMany({
+        where: { user: { email: 'losing@a4.test' } },
+        data: { disabledAt: new Date() },
+      });
+
+      await confirm(sent[0].token).expect(401);
+    });
+
+    it('cannot replay the link', async () => {
+      const token = await platformLogin('once@a4.test', PlatformRole.OWNER);
+      await request(token, {
+        currentPassword: PASSWORD,
+        newEmail: 'oncemoved@a4.test',
+      }).expect(202);
+
+      await confirm(sent[0].token).expect(200);
+      await confirm(sent[0].token).expect(400);
+    });
+
+    it('is shut to a school token', async () => {
+      await ctx
+        .http()
+        .post('/api/platform/auth/change-email')
+        .set(bearer(school.accessToken))
+        .send({ currentPassword: PASSWORD, newEmail: 'nope@a4.test' })
+        .expect(404);
+    });
   });
 
   // -------------------------------------------------------------------------

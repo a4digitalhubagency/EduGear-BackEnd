@@ -123,6 +123,8 @@ export class TokenService {
     platformAdminId: string;
     tokenVersion: number;
     meta?: SessionMeta;
+    /** Carried across a rotation, so reuse of a retired token is detectable. */
+    familyId?: string;
   }): Promise<IssuedTokens> {
     const jwtConfig = this.config.get('jwt', { infer: true });
     const accessTtlMs = this.ttlToMs(jwtConfig.accessTtl);
@@ -151,7 +153,7 @@ export class TokenService {
           userId: params.userId,
           membershipId: null,
           tokenHash: TokenService.sha256(refreshToken),
-          familyId: randomUUID(),
+          familyId: params.familyId ?? randomUUID(),
           expiresAt: new Date(Date.now() + refreshTtlMs),
           createdByIp: params.meta?.ip,
           userAgent: params.meta?.userAgent?.slice(0, 255),
@@ -237,6 +239,84 @@ export class TokenService {
     );
 
     return { tokens, userId: stored.userId, membershipId: nextMembershipId };
+  }
+
+  /**
+   * Validates a **platform** refresh token and returns what reissuing needs.
+   *
+   * Deliberately not a branch inside `rotateRefreshToken`. The two scopes are
+   * resolved by separate paths everywhere else — the JWT strategy, the guard —
+   * and the same reasoning applies here, where the prize for a mistake is a
+   * school session turning into a console session. Each path refuses the
+   * other's tokens explicitly rather than relying on a shared function to get
+   * a condition the right way round:
+   *
+   * - `rotateRefreshToken` requires a membership, so a platform token (stored
+   *   with `membershipId: null`) cannot pass through it.
+   * - this requires the absence of one, so a school token cannot pass here.
+   *
+   * It validates the token only. Whether the operator still *has* platform
+   * access is re-checked by the caller against the live record, because a
+   * revocation after the token was issued must bite on the next use rather
+   * than at the end of a thirty-day refresh window.
+   */
+  async consumePlatformRefreshToken(rawToken: string): Promise<{
+    userId: string;
+    familyId: string;
+    tokenVersion: number;
+  }> {
+    const tokenHash = TokenService.sha256(rawToken);
+
+    const stored = await RequestContext.runAsSystem(() =>
+      this.prisma.refreshToken.findUnique({
+        where: { tokenHash },
+        include: { user: true },
+      }),
+    );
+
+    if (!stored) {
+      throw AppException.unauthorized(
+        'Invalid refresh token',
+        ErrorCode.TOKEN_INVALID,
+      );
+    }
+
+    if (stored.membershipId !== null) {
+      // A school session's token, offered at the console door. Refused here,
+      // and left alone: it is a valid token for its own scope, so revoking it
+      // would let anyone log a member of staff out by guessing.
+      throw AppException.unauthorized(
+        'This session is not a platform session',
+        ErrorCode.TOKEN_INVALID,
+      );
+    }
+
+    if (stored.revokedAt) {
+      // Same reasoning as the school path: a retired token being presented
+      // again means it was captured, so the whole family goes.
+      this.logger.warn(
+        { userId: stored.userId, familyId: stored.familyId },
+        'Platform refresh token reuse detected — revoking token family',
+      );
+      await this.revokeFamily(stored.familyId);
+      throw AppException.unauthorized(
+        'Refresh token has already been used. Please sign in again.',
+        ErrorCode.TOKEN_REUSED,
+      );
+    }
+
+    if (stored.expiresAt.getTime() <= Date.now()) {
+      throw AppException.unauthorized(
+        'Refresh token has expired',
+        ErrorCode.TOKEN_EXPIRED,
+      );
+    }
+
+    return {
+      userId: stored.userId,
+      familyId: stored.familyId,
+      tokenVersion: stored.user.tokenVersion,
+    };
   }
 
   async revokeRefreshToken(rawToken: string): Promise<void> {

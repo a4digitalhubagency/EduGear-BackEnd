@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
+  ApiAcceptedResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
@@ -21,7 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { PlatformRole } from '@prisma/client';
 import type { Request } from 'express';
-import { AUTH_THROTTLE } from '../common/constants/throttle';
+import { AUTH_THROTTLE, STRICT_THROTTLE } from '../common/constants/throttle';
 import {
   AllowNoTenant,
   Public,
@@ -29,8 +30,14 @@ import {
 } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
 import { SessionMeta } from '../auth/token.service';
-import { ChangePasswordDto, MessageDto } from '../auth/dto/auth.dto';
 import {
+  ChangePasswordDto,
+  MessageDto,
+  RefreshTokenDto,
+} from '../auth/dto/auth.dto';
+import {
+  ChangeEmailDto,
+  ConfirmEmailChangeDto,
   GrantPlatformAccessDto,
   PlatformAdminDto,
   PlatformLoginDto,
@@ -96,6 +103,41 @@ export class PlatformController {
     return this.auth.login(dto, this.meta(req));
   }
 
+  @Post('auth/refresh')
+  @Public()
+  @Throttle(AUTH_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Exchange a platform refresh token for a new pair',
+    description:
+      'Separate from /auth/refresh, which requires a school membership an ' +
+      'operator does not have. Refresh tokens rotate on every use, and ' +
+      'replaying a used one revokes the whole family. Platform access that ' +
+      'has been revoked in the meantime is refused here, not at the end of ' +
+      'the refresh window.',
+  })
+  refresh(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: Request,
+  ): Promise<PlatformSessionDto> {
+    return this.auth.refresh(dto.refreshToken, this.meta(req));
+  }
+
+  @Post('auth/logout')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'End this platform session',
+    description:
+      'Public because it proves itself with the refresh token it revokes; an ' +
+      'expired access token must not be able to strand a session open.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async logout(@Body() dto: RefreshTokenDto): Promise<MessageDto> {
+    await this.auth.logout(dto.refreshToken);
+    return { message: 'Signed out.' };
+  }
+
   @Get('me')
   @RequirePlatformRole(...ALL_ROLES)
   @ApiBearerAuth()
@@ -125,6 +167,44 @@ export class PlatformController {
   // -------------------------------------------------------------------------
   // Tenants
   // -------------------------------------------------------------------------
+
+  @Post('auth/change-email')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  // Verifies a password and sends mail, so it carries the tighter budget.
+  @Throttle(STRICT_THROTTLE)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: 'Ask to move this operator account to a different address',
+    description:
+      'Confirmation is sent to the NEW address, not the current one, so a ' +
+      'mistyped address changes nothing. Nothing moves until that link is ' +
+      'opened.',
+  })
+  @ApiAcceptedResponse({ type: MessageDto })
+  async changeEmail(@Body() dto: ChangeEmailDto): Promise<MessageDto> {
+    await this.auth.requestEmailChange(dto);
+    return {
+      message:
+        'Check the new address for a confirmation link. Nothing changes until it is opened.',
+    };
+  }
+
+  @Post('auth/confirm-email')
+  @Public()
+  @Throttle(STRICT_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm a new operator email',
+    description:
+      'Public because it is opened from a mailbox, which is the proof: the ' +
+      'link was only ever sent to the address being moved to.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async confirmEmail(@Body() dto: ConfirmEmailChangeDto): Promise<MessageDto> {
+    await this.auth.confirmEmailChange(dto.token);
+    return { message: 'Email updated. Sign in with the new address.' };
+  }
 
   @Get('stats')
   @RequirePlatformRole(...ALL_ROLES)

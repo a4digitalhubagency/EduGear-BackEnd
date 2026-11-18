@@ -86,6 +86,10 @@ enum VerificationTokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
   INVITATION
+  /// Confirming a new address before it replaces the old one. The address
+  /// being moved to rides in the token's `metadata`, so a link that is never
+  /// opened changes nothing.
+  EMAIL_CHANGE
 }
 
 // ---------------------------------------------------------------------------

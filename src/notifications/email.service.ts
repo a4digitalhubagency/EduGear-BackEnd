@@ -230,23 +230,92 @@ export class EmailService implements OnModuleInit {
     });
   }
 
+  /**
+   * Sent to the address being moved *to*, never the one being moved from.
+   *
+   * That is the whole safety of the flow: a mistyped address gets a link
+   * nobody can open, and the account keeps the email it already had. Sending
+   * the confirmation to the current address would confirm a typo instead.
+   */
+  async sendPlatformEmailChange(params: {
+    to: string;
+    firstName: string;
+    token: string;
+  }): Promise<void> {
+    const url = `${this.frontendUrl()}/platform/confirm-email?token=${encodeURIComponent(params.token)}`;
+    await this.send({
+      to: params.to,
+      subject: 'Confirm your new EduGear operator email',
+      text:
+        `Hi ${params.firstName},\n\nSomeone asked to move an EduGear platform ` +
+        `operator account to this address. Confirm it here:\n${url}\n\n` +
+        `If that was not you, ignore this — nothing changes until the link is opened.`,
+      html: this.layout(
+        `Hi ${params.firstName},`,
+        'Someone asked to move an EduGear platform operator account to this ' +
+          'address. Nothing changes until you confirm.',
+        'Confirm this address',
+        url,
+      ),
+    });
+  }
+
+  /**
+   * And the address being moved *away from* is told after the fact.
+   *
+   * It is the only warning the real owner gets if someone with their password
+   * quietly moves the account somewhere they control — so it carries no link
+   * to click, only a reason to raise the alarm.
+   */
+  async sendPlatformEmailChanged(params: {
+    to: string;
+    firstName: string;
+    newEmail: string;
+  }): Promise<void> {
+    await this.send({
+      to: params.to,
+      subject: 'Your EduGear operator email was changed',
+      text:
+        `Hi ${params.firstName},\n\nThe EduGear platform operator account that ` +
+        `used this address now uses ${params.newEmail}.\n\n` +
+        `If you did not do this, contact A4 immediately — someone else may ` +
+        `have your password.`,
+      html: this.layout(
+        `Hi ${params.firstName},`,
+        `The EduGear platform operator account that used this address now uses ` +
+          `<strong>${escapeHtml(params.newEmail)}</strong>. If you did not do ` +
+          `this, contact A4 immediately — someone else may have your password.`,
+      ),
+    });
+  }
+
   private frontendUrl(): string {
     return this.config
       .get('app', { infer: true })
       .frontendUrl.replace(/\/$/, '');
   }
 
+  /**
+   * The call to action is optional: a warning that someone changed an account
+   * deliberately gives the reader nothing to click, because the whole point of
+   * it is that the sender may not be who they say they are.
+   */
   private layout(
     greeting: string,
     body: string,
-    ctaLabel: string,
-    ctaUrl: string,
+    ctaLabel?: string,
+    ctaUrl?: string,
   ): string {
+    const cta =
+      ctaLabel && ctaUrl
+        ? `
+  <p><a href="${ctaUrl}" style="display:inline-block;padding:12px 20px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px">${ctaLabel}</a></p>
+  <p style="font-size:12px;color:#666">If the button does not work, paste this link into your browser:<br>${ctaUrl}</p>`
+        : '';
+
     return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.6">
   <p>${escapeHtml(greeting)}</p>
-  <p>${body}</p>
-  <p><a href="${ctaUrl}" style="display:inline-block;padding:12px 20px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px">${ctaLabel}</a></p>
-  <p style="font-size:12px;color:#666">If the button does not work, paste this link into your browser:<br>${ctaUrl}</p>
+  <p>${body}</p>${cta}
   <p style="font-size:12px;color:#666">EduGear — school management by A4 Technologies</p>
 </body></html>`;
   }
