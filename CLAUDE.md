@@ -358,6 +358,18 @@ every rule is explicit:
   that window is not revocation. A school token offered at the platform door is
   refused but **not** revoked: it is valid for its own scope, and revoking it
   would let anyone log staff out by guessing.
+- **Changing an operator's email confirms at the new address, never the current
+  one.** A mistyped address then produces a link nobody can open and the account
+  keeps the email it had; confirming at the current address would confirm the
+  typo and strand the only account that can administer the platform. The
+  destination rides in the token's `metadata`, so an abandoned request leaves no
+  half-changed row. The address is re-checked at confirm time as well as at
+  request time — the link may have sat in an inbox while somebody took it — and
+  the **old** address is told afterwards, because that notice is the only
+  warning the real owner gets if someone with their password moved the account.
+  Note both routes answer 409 when the address is taken, but a Prisma unique
+  violation renders as `DUPLICATE_RESOURCE`; a test that only asserts the status
+  passes with the check removed.
 - The first owner comes from `npm run platform:grant`, never from an env var read
   at boot — that would be a backdoor re-applied on every deploy.
 

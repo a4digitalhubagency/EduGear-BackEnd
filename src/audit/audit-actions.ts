@@ -91,6 +91,8 @@ export const AUDIT_ACTIONS = {
   // its trail shows what was done to it and by whom.
   PLATFORM_LOGIN_SUCCEEDED: 'platform.login_succeeded',
   PLATFORM_PASSWORD_CHANGED: 'platform.password_changed',
+  PLATFORM_EMAIL_CHANGE_REQUESTED: 'platform.email_change_requested',
+  PLATFORM_EMAIL_CHANGED: 'platform.email_changed',
   PLATFORM_LOGIN_FAILED: 'platform.login_failed',
   PLATFORM_ACCESS_GRANTED: 'platform.access_granted',
   PLATFORM_ACCESS_REVOKED: 'platform.access_revoked',
