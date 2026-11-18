@@ -371,7 +371,17 @@ every rule is explicit:
   violation renders as `DUPLICATE_RESOURCE`; a test that only asserts the status
   passes with the check removed.
 - The first owner comes from `npm run platform:grant`, never from an env var read
-  at boot — that would be a backdoor re-applied on every deploy.
+  at boot — that would be a backdoor re-applied on every deploy. The script
+  **prints the database it is about to write to, and how many users are in it,
+  before writing** — the environments differ by one word in `DATABASE_URL`, and
+  getting it wrong is silent: the grant succeeds and the console still refuses
+  you, because the row went somewhere nothing reads. `--reset-password`
+  recovers an account nobody can get into, clearing `failedLoginAttempts` and
+  `lockedUntil` with it, so that recovery never needs a hand-written argon2
+  hash run against production. **A disabled account is refused at login with
+  the same message as a wrong password**, so the script says when it re-enabled
+  one: from outside, "switched off" and "wrong password" are indistinguishable,
+  which is correct for security and miserable when you are the one locked out.
 
 ### Environments
 
