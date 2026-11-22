@@ -7,8 +7,13 @@ import { PaginatedDto, paginate } from '../common/dto/pagination.dto';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
+import { lockSchoolScope } from '../database/row-lock';
 import { TenantAwarePrisma } from '../database/prisma.service';
-import { formatAdmissionNumber, nextSequence } from './admission-number';
+import {
+  admissionNumbersIssuedIn,
+  formatAdmissionNumber,
+  nextSequence,
+} from './admission-number';
 import {
   BulkAdmitResultDto,
   BulkAdmitStudentsDto,
@@ -107,7 +112,7 @@ export class StudentsService {
       return this.toDto(created);
     }
 
-    return this.toDto(await this.createWithGeneratedNumber(data));
+    return this.toDto(await this.createWithGeneratedNumber(data, schoolId));
   }
 
   async list(query: QueryStudentsDto): Promise<PaginatedDto<StudentDto>> {
@@ -450,36 +455,53 @@ export class StudentsService {
   }
 
   /**
-   * Generating a number means reading the last one and writing the next, which
-   * two concurrent admissions can do at the same instant. The unique index is
-   * the real guard; this retries when it fires rather than failing the caller.
+   * Generating a number means reading the highest one and writing the next,
+   * which has no single row to lock — so the allocation is serialised per
+   * school with an advisory lock, the same way the storage quota is.
+   *
+   * Without it, concurrent admissions all read the same maximum and compute
+   * the same next number. The unique index refuses all but one, and because
+   * each retry recomputes the identical number the retries collide too: a
+   * burst of ten admissions used to lose four of them. The retry loop is kept
+   * as a backstop for a number that arrived some other way — a school typing
+   * one in by hand that happens to be next — but it is no longer load-bearing
+   * for ordinary concurrency.
+   *
+   * The lock is taken before the arm's row lock, and that order is the same
+   * here and in the importer. Two paths taking the same two locks in opposite
+   * orders is the textbook deadlock.
    */
   private async createWithGeneratedNumber(
     data: Omit<Prisma.StudentUncheckedCreateInput, 'studentId'>,
+    schoolId: string,
   ): Promise<StudentRow> {
     const year = data.admissionDate
       ? new Date(data.admissionDate).getUTCFullYear()
       : new Date().getUTCFullYear();
 
+    const prefix = (await this.settings.current()).admissionNumberPrefix;
+
     for (let attempt = 0; attempt < ADMISSION_NUMBER_ATTEMPTS; attempt++) {
-      const existing = await this.prisma.student.findMany({
-        where: { studentId: { startsWith: `${year}/` } },
-        select: { studentId: true },
-      });
-
-      const studentId = formatAdmissionNumber(
-        year,
-        nextSequence(
-          existing.map((row) => row.studentId),
-          year,
-        ),
-        (await this.settings.current()).admissionNumberPrefix,
-      );
-
       try {
-        // Each attempt is its own transaction: a unique violation aborts it,
-        // and the arm lock is released so the retry can take it again.
         return await this.prisma.$transaction(async (tx) => {
+          await lockSchoolScope(tx, 'admissionNumber', schoolId);
+
+          // Read *inside* the lock. Reading before taking it would be the
+          // same race with extra steps.
+          const existing = await tx.student.findMany({
+            where: admissionNumbersIssuedIn(year),
+            select: { studentId: true },
+          });
+
+          const studentId = formatAdmissionNumber(
+            year,
+            nextSequence(
+              existing.map((row) => row.studentId),
+              year,
+            ),
+            prefix,
+          );
+
           if (data.classArmId) {
             await this.arms.assertHasRoom(data.classArmId, 1, tx);
           }

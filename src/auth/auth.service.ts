@@ -406,6 +406,41 @@ export class AuthService {
       return;
     }
 
+    // An address nobody has proved they own does not get a reset link.
+    //
+    // This is the step that turns a typo into a stolen school. Registration
+    // does not require the owner's address to be verified, so `school@gmial`
+    // instead of `school@gmail` produces a working school — and sends the
+    // activation email to whoever owns the typo. That tells them the account
+    // exists; a password reset then hands them the only PROPRIETOR login,
+    // which is deliberately the one role a school cannot take away.
+    //
+    // Refusing here breaks the chain at its narrowest point: the stray
+    // activation mail is all the wrong recipient ever gets. The legitimate
+    // owner of an unverified address still has a way through — verify first,
+    // via resend-verification, then reset.
+    //
+    // The response is deliberately unchanged. Answering differently would
+    // make this endpoint an oracle for which addresses are registered but
+    // unverified, which is a worse leak than the one being closed.
+    if (!user.emailVerifiedAt) {
+      this.logger.warn(
+        { userId: user.id },
+        'Password reset refused: email address has never been verified',
+      );
+      await this.audit.record({
+        action: AUDIT_ACTIONS.AUTH_PASSWORD_RESET_REFUSED_UNVERIFIED,
+        entityType: 'User',
+        entityId: user.id,
+        description:
+          'Password reset requested for an address that has never been verified',
+        schoolId: null,
+        actorUserId: user.id,
+        membershipId: null,
+      });
+      return;
+    }
+
     const { passwordResetTtlMinutes } = this.config.get('auth', {
       infer: true,
     });

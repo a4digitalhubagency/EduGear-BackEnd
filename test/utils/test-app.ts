@@ -122,13 +122,26 @@ export interface RegisteredSchool {
   refreshToken: string;
 }
 
-/** Registers a school through the public API — same path a real customer takes. */
+/**
+ * Registers a school through the public API — same path a real customer takes
+ * — and then confirms the owner's email address, because that is what a real
+ * customer does next.
+ *
+ * The confirmation is part of the helper rather than each suite's problem so
+ * that fixtures model a school in normal operation. It matters because a few
+ * things now depend on the address having been proved: a password reset is not
+ * sent to an unverified address, and parents cannot be invited to the portal
+ * from one. A suite testing *those* rules passes `verified: false` and says so
+ * in the test name.
+ */
 export async function registerSchool(
   ctx: TestContext,
   overrides: Partial<{
     schoolName: string;
     email: string;
     password: string;
+    /** Leave the owner's address unproved, for the rules that turn on it. */
+    verified: boolean;
   }> = {},
 ): Promise<RegisteredSchool> {
   const unique = Math.random().toString(36).slice(2, 8);
@@ -150,6 +163,14 @@ export async function registerSchool(
     .expect(201);
 
   const body = response.body;
+
+  if (overrides.verified !== false) {
+    await ctx.db.user.update({
+      where: { id: body.user.id as string },
+      data: { emailVerifiedAt: new Date() },
+    });
+  }
+
   return {
     schoolId: body.activeSchool.schoolId,
     schoolName,
