@@ -1,0 +1,10 @@
+{
+  "//": "The root tsconfig covers src/test/prisma only, so these operational scripts were typechecked by nothing — the same silent-drift problem .railway/railway.ts exists to prevent, in files that write to production databases. This extends the root config (decorators, paths, lib) and points it at scripts/ as well, because run-retention.ts and grant-platform-access.ts import from src/.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "../src/**/*"],
+  "//exclude": "The spec files bring Jest's globals, which these scripts neither have nor need; including them only invites name collisions with ordinary local helpers.",
+  "exclude": ["../src/**/*.spec.ts"]
+}

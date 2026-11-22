@@ -32,6 +32,7 @@ import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
+import { RetentionModule } from './retention/retention.module';
 import { FinanceModule } from './finance/finance.module';
 import { GuardiansModule } from './guardians/guardians.module';
 import { PlatformModule } from './platform/platform.module';
@@ -132,6 +133,7 @@ function headerOf(req: Record<string, unknown>, name: string): unknown {
     RedisModule,
     PrismaModule,
     FilesModule,
+    RetentionModule,
     NotificationsModule,
     AuditModule,
     AuthModule,

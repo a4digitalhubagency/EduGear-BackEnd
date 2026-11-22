@@ -15,7 +15,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,test,scripts}/**/*.ts\" --fix",
     "typecheck:railway": "tsc -p .railway/tsconfig.json",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -28,6 +28,10 @@
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force",
     "platform:grant": "ts-node scripts/grant-platform-access.ts",
+    "retention:preview": "ts-node scripts/run-retention.ts",
+    "retention:run": "ts-node scripts/run-retention.ts",
+    "verify:deploy": "ts-node scripts/verify-deployment.ts",
+    "typecheck:scripts": "tsc -p scripts/tsconfig.json",
     "db:check": "ts-node scripts/check-database.ts"
   },
   "dependencies": {

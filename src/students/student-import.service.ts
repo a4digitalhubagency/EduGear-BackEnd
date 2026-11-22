@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { isEmail, validate } from 'class-validator';
-import { Prisma, StudentStatus } from '@prisma/client';
+import { ConsentMethod, Prisma, StudentStatus } from '@prisma/client';
 import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
@@ -26,6 +26,11 @@ import {
   ImportField,
   mapHeaders,
 } from './import/import-columns';
+import {
+  consentColumns,
+  populatedSensitiveFields,
+  SensitiveConsentDeclaration,
+} from './sensitive-fields';
 import {
   NormalisedRow,
   armKey,
@@ -74,12 +79,21 @@ interface RowState {
   admissionNumber: string | null;
   studentDbId: string | null;
   written: boolean;
+  /** Null when the row holds nothing sensitive, so nothing to authorise. */
+  consent: ReturnType<typeof consentColumns<ConsentMethod>> | null;
 }
 
 interface ImportRecord {
   row: number;
   line: number | null;
   raw: Partial<Record<ImportField, unknown>>;
+  /**
+   * Consent for this row alone, which only the bulk endpoint supplies — its
+   * rows are full admission payloads, so each one can carry the parent who
+   * signed. A spreadsheet has no column for it and uses the file-level
+   * declaration instead.
+   */
+  consent?: SensitiveConsentDeclaration<ConsentMethod>;
 }
 
 export interface ImportOptions {
@@ -90,6 +104,21 @@ export interface ImportOptions {
   /** What the caller may do with parent records, from their permissions. */
   canCreateGuardians: boolean;
   canLinkGuardians: boolean;
+  /**
+   * The school's declaration that parental consent for the sensitive columns
+   * in this file is on record, and how it was obtained.
+   *
+   * A spreadsheet cannot carry a signature, and asking a registrar to confirm
+   * 300 consent forms one row at a time would push them towards the thing we
+   * are trying to prevent: deleting the column and typing the values in
+   * later, unrecorded. So the school declares it once for the file, which is
+   * the same act as ticking the box on each form — and it is *their*
+   * declaration, recorded against every row it covers, auditable afterwards.
+   *
+   * Without it, a row holding a sensitive value fails and says which column
+   * to clear. Rows holding nothing sensitive are unaffected either way.
+   */
+  sensitiveDataConsent?: SensitiveConsentDeclaration<ConsentMethod>;
 }
 
 const LABELS = new Map<string, string>(
@@ -216,6 +245,16 @@ export class StudentImportService {
       row: index + 1,
       line: null,
       raw: { ...student },
+      // Each row here is a full admission payload, so it can name the parent
+      // who signed. Dropping it and falling back to the file declaration
+      // would quietly replace a real signatory with a blanket statement.
+      consent: student.sensitiveDataConsent
+        ? {
+            method: student.sensitiveDataConsent.method,
+            givenBy: student.sensitiveDataConsent.givenBy,
+            givenAt: student.sensitiveDataConsent.givenAt,
+          }
+        : undefined,
     }));
 
     const { states } = await this.execute(
@@ -413,6 +452,8 @@ export class StudentImportService {
 
     this.checkGuardianShape(data, errors);
 
+    const consent = this.checkSensitiveConsent(data, record, options, errors);
+
     return {
       row: record.row,
       line: record.line,
@@ -425,7 +466,52 @@ export class StudentImportService {
       admissionNumber: data.studentId ?? null,
       studentDbId: null,
       written: false,
+      consent,
     };
+  }
+
+  /**
+   * Genotype, blood group, religion, state of origin and LGA are held under
+   * parental consent (NDP Act s.30(1)(a)), and section 26(2) makes the school
+   * prove it. An import is the one path that could put thousands of those
+   * values in at once, so it is the path where an unrecorded basis would do
+   * the most damage — and the easiest place to miss, because the columns sit
+   * in the middle of a spreadsheet of ordinary fields.
+   *
+   * The row's own consent wins over the file's declaration: a caller that
+   * named the signatory for this student should have that recorded, not the
+   * blanket statement.
+   *
+   * Rows holding nothing sensitive return null and need no declaration — an
+   * import of names and classes is unaffected by any of this.
+   */
+  private checkSensitiveConsent(
+    data: NormalisedRow,
+    record: ImportRecord,
+    options: ImportOptions,
+    errors: Issue[],
+  ): ReturnType<typeof consentColumns<ConsentMethod>> | null {
+    const sensitive = populatedSensitiveFields(data);
+    if (sensitive.length === 0) return null;
+
+    const declaration = record.consent ?? options.sensitiveDataConsent;
+    if (!declaration) {
+      // One issue per column, not one for the row: the registrar's next move
+      // is to clear a column or produce the forms, and both need the names.
+      for (const field of sensitive) {
+        errors.push({
+          field,
+          message:
+            `${label(field)} needs the parent’s consent on record. Confirm ` +
+            'the consent forms are on file for this import, or remove the ' +
+            'column — the rest of the row imports without it.',
+          kind: 'INVALID',
+        });
+      }
+      return null;
+    }
+
+    return consentColumns(declaration, new Date());
   }
 
   private checkGuardianShape(data: NormalisedRow, errors: Issue[]): void {
@@ -953,6 +1039,10 @@ export class StudentImportService {
           nationality: data.nationality ?? 'Nigerian',
           religion: data.religion ?? null,
           notes: data.notes ?? null,
+          // Null for a row with nothing sensitive in it, so an ordinary
+          // import does not litter consent records across students whose
+          // parents were never asked anything.
+          ...(state.consent ?? {}),
         };
       }),
       select: { id: true, studentId: true },

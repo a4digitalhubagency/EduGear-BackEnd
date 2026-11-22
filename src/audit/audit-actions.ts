@@ -57,6 +57,10 @@ export const AUDIT_ACTIONS = {
   STUDENT_UPDATED: 'student.updated',
   STUDENT_DEACTIVATED: 'student.deactivated',
   STUDENT_DELETED: 'student.deleted',
+  /** A data-subject right exercised, not an ordinary edit — kept separate
+   *  so an NDPA s.34 erasure can be evidenced without reading every update. */
+  STUDENT_SENSITIVE_CONSENT_RECORDED: 'student.sensitive_consent_recorded',
+  STUDENT_SENSITIVE_DATA_ERASED: 'student.sensitive_data_erased',
   STUDENT_BULK_IMPORTED: 'student.bulk_imported',
   STUDENT_PROMOTED: 'student.promoted',
   STUDENT_GRADUATED: 'student.graduated',
@@ -100,6 +104,16 @@ export const AUDIT_ACTIONS = {
   PLATFORM_SCHOOL_REACTIVATED: 'platform.school_reactivated',
   PLATFORM_SCHOOL_CANCELLED: 'platform.school_cancelled',
   PLATFORM_SCHOOL_QUOTA_SET: 'platform.school_quota_set',
+  /** The s.40(8) register. Never deleted — only recorded, amended and closed. */
+  PLATFORM_BREACH_RECORDED: 'platform.breach_recorded',
+  PLATFORM_BREACH_UPDATED: 'platform.breach_updated',
+  /** Separate because this is the one fact the register exists to prove. */
+  PLATFORM_BREACH_COMMISSION_NOTIFIED: 'platform.breach_commission_notified',
+  /** Retention — every destructive sweep leaves a trace of what it removed. */
+  RETENTION_TASK_RUN: 'retention.task_run',
+  RETENTION_SCHOOL_PURGED: 'retention.school_purged',
+  RETENTION_SCHOOL_PURGE_PREVIEWED: 'retention.school_purge_previewed',
+  STUDENT_RECORD_EXPORTED: 'student.record_exported',
   RESULT_CREATED: 'result.created',
   RESULT_SUBMITTED: 'result.submitted',
   RESULT_APPROVED: 'result.approved',

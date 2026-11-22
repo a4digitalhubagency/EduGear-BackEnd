@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ConsentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -13,6 +14,7 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { MAX_BULK_STUDENTS } from './bulk.dto';
 
@@ -28,6 +30,37 @@ import { MAX_BULK_STUDENTS } from './bulk.dto';
 export enum ImportMode {
   ATOMIC = 'ATOMIC',
   PARTIAL = 'PARTIAL',
+}
+
+/**
+ * The school's declaration that it holds parental consent for the sensitive
+ * columns in this file.
+ *
+ * Needed only when the file carries genotype, blood group, religion, state of
+ * origin or LGA. Those five are held under consent (NDP Act s.30(1)(a)) while
+ * the rest of a student record is not, and section 26(2) makes the school
+ * prove it — so the import records the declaration against every row it
+ * covers rather than taking the values on trust.
+ */
+export class ImportSensitiveConsentDto {
+  @ApiProperty({
+    enum: ConsentMethod,
+    description:
+      'How consent was obtained for the students in this file. ' +
+      'ADMISSION_FORM is the usual answer: the box on the school’s own form.',
+  })
+  @IsEnum(ConsentMethod)
+  method: ConsentMethod;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    description: 'Defaults to now — when the school made the declaration.',
+  })
+  @Type(() => Date)
+  @IsDate()
+  @IsOptional()
+  givenAt?: Date;
 }
 
 class ImportOptionsDto {
@@ -58,6 +91,18 @@ class ImportOptionsDto {
   @IsUUID()
   @IsOptional()
   defaultClassArmId?: string;
+
+  @ApiPropertyOptional({
+    type: () => ImportSensitiveConsentDto,
+    description:
+      'Required when the file carries genotype, blood group, religion, ' +
+      'state of origin or LGA. Without it those rows fail and name the ' +
+      'column — rows with none of those columns import unaffected.',
+  })
+  @ValidateNested()
+  @Type(() => ImportSensitiveConsentDto)
+  @IsOptional()
+  sensitiveDataConsent?: ImportSensitiveConsentDto;
 }
 
 export class ImportStudentsDto extends ImportOptionsDto {
