@@ -205,6 +205,15 @@ are **copied into each school** at provisioning so a school can retune its own r
   because a missing variable once published the whole API surface on the live service. The one sanctioned exception is
   [src/common/constants/throttle.ts](src/common/constants/throttle.ts), which reads `process.env`
   directly because `@Throttle()` decorators evaluate before DI exists.
+- **`EMAIL_FROM` must be on a domain verified with the provider**, and production refuses to boot
+  with a placeholder while `EMAIL_PROVIDER=resend`. A provider rejects an unverifiable sender per
+  message at send time, and nothing in the application surfaces that: a failed invitation
+  deliberately does not fail the request that triggered it, so a school sees "invited" and the
+  parent receives nothing. The two placeholders are easy to ship — `.env.example` carried
+  `example.com`, and this file's own default was `edugear.app`, differing from the real domain by
+  its TLD alone. It also now gates a feature: inviting parents to the portal requires the inviting
+  account's address to have been verified, and that verification arrives by email, so broken
+  sending presents as a permissions error nobody can explain.
 - **Redis is required in production** and optional everywhere else. `RedisService.client` is `null`
   when `REDIS_URL` is unset, and callers fall back to in-process state — correct for a single instance
   only, which is why [env.validation.ts](src/config/env.validation.ts) refuses to boot production
