@@ -247,4 +247,4 @@ personal-data column without an entry here is an incomplete change.
 
 ---
 
-*A4 Technologies · EduGear · privacy@edugear.ng*
+*A4 Technologies · EduGear · edugearsupport@gmail.com*

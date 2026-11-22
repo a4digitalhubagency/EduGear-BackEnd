@@ -7,7 +7,7 @@ These terms govern use of EduGear, a school management service operated by **A4 
 
 - **Address:** `[TO CONFIRM: registered office address]`
 - **RC number:** `[TO CONFIRM]`
-- **Contact:** support@edugear.ng
+- **Contact:** edugearsupport@gmail.com
 
 By subscribing to EduGear, or by using it, the School accepts these terms. If you are accepting on
 behalf of a school, you confirm you are authorised to bind it.
@@ -71,7 +71,7 @@ The School and its Authorised Users must not:
 - copy, decompile or reverse-engineer the Service, except where law permits it.
 
 **Responsible security research is welcome.** Report anything you find to
-security@edugear.ng and we will not pursue you for good-faith testing that respects these terms.
+edugearsupport@gmail.com and we will not pursue you for good-faith testing that respects these terms.
 
 ---
 
@@ -167,7 +167,7 @@ commercially — an uptime figure, support hours and response targets.]`
 Planned maintenance that is likely to interrupt the Service will be notified in advance where
 practicable, and scheduled outside school hours where we reasonably can.
 
-Support is provided by email at support@edugear.ng.
+Support is provided by email at edugearsupport@gmail.com.
 
 ---
 
@@ -287,8 +287,8 @@ whole agreement between us on this subject.
 the courts of `[TO CONFIRM: Lagos State]` have jurisdiction, without preventing a data subject from
 bringing a claim where the NDP Act allows.
 
-**Notices.** To us: support@edugear.ng. To the School: the administrative contact on its account.
+**Notices.** To us: edugearsupport@gmail.com. To the School: the administrative contact on its account.
 
 ---
 
-*A4 Technologies · EduGear · support@edugear.ng*
+*A4 Technologies · EduGear · edugearsupport@gmail.com*

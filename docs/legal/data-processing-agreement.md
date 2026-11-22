@@ -27,7 +27,7 @@ and Implementation Directive 2025** ("GAID").
 | Name | A4 Technologies |
 | RC number | `[TO CONFIRM]` |
 | Address | `[TO CONFIRM: registered office]` |
-| Contact | privacy@edugear.ng |
+| Contact | edugearsupport@gmail.com |
 | Data Protection Officer | `[TO CONFIRM: name and contact]` |
 | NDPC registration no. | `[TO CONFIRM: once registered]` |
 
@@ -473,4 +473,4 @@ appended here, per clause 13.]`
 
 ---
 
-*A4 Technologies · EduGear · privacy@edugear.ng*
+*A4 Technologies · EduGear · edugearsupport@gmail.com*

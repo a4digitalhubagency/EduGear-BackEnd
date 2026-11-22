@@ -9,8 +9,7 @@ EduGear is operated by **A4 Technologies** ("we", "us").
 
 - **Address:** `[TO CONFIRM: registered office address]`
 - **RC number:** `[TO CONFIRM]`
-- **General contact:** support@edugear.ng
-- **Data protection contact:** privacy@edugear.ng
+- **Contact for everything, including data protection:** edugearsupport@gmail.com
 - **Data Protection Officer:** `[TO CONFIRM: name and contact once the DPO is appointed]`
 
 ---
@@ -231,7 +230,7 @@ record, section 34(2)(b) allows it to be retained — but only that record, and 
 Everything beyond it is erased or de-identified.
 
 **How to exercise them.** If the data belongs to a school, ask the school. For account data we
-control, email **privacy@edugear.ng**. We respond without undue delay and in any case within
+control, email **edugearsupport@gmail.com**. We respond without undue delay and in any case within
 30 days. There is no charge, unless providing a copy would impose unreasonable cost, in which case
 we will tell you before doing anything.
 
@@ -240,7 +239,7 @@ we will tell you before doing anything.
 ## 9. Complaints
 
 If you are unhappy with how your data has been handled, please tell us first at
-**privacy@edugear.ng** — most things are quicker to fix directly.
+**edugearsupport@gmail.com** — most things are quicker to fix directly.
 
 You also have the right, under **section 46(1) of the NDP Act**, to complain to:
 
@@ -298,4 +297,4 @@ rights, we will tell schools directly before it takes effect.
 
 ---
 
-*A4 Technologies · EduGear · support@edugear.ng*
+*A4 Technologies · EduGear · edugearsupport@gmail.com*
