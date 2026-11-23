@@ -2,6 +2,7 @@ import {
   MiddlewareConsumer,
   Module,
   NestModule,
+  RequestMethod,
   ValidationPipe,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -55,6 +56,16 @@ function headerOf(req: Record<string, unknown>, name: string): unknown {
       useFactory: (config: ConfigService<AppConfig, true>) => {
         const app = config.get('app', { infer: true });
         return {
+          // nestjs-pino defaults this to `[{ path: '*' }]`, which
+          // path-to-regexp v8 (Nest 11) no longer accepts. Nest auto-converts
+          // and warns twice on every boot — but the conversion is an explicit
+          // compatibility shim, and if it is ever dropped the logger
+          // middleware stops being applied. That would be quiet and bad: the
+          // Sentry setup deliberately sends no breadcrumbs *because* the
+          // context is supposed to be in these logs under the same
+          // requestId. Naming the modern pattern here costs nothing and does
+          // not depend on the shim surviving.
+          forRoutes: [{ path: '{*path}', method: RequestMethod.ALL }],
           pinoHttp: {
             level: app.logLevel,
             // Every log line carries request/user/tenant so an incident can be traced.

@@ -18,6 +18,7 @@ describe('Concurrency', () => {
   let school: RegisteredSchool;
   let armId: string;
   let invoiceId: string;
+  let structureId: string;
 
   const auth = () => ({ Authorization: `Bearer ${school.accessToken}` });
 
@@ -113,6 +114,8 @@ describe('Concurrency', () => {
       .set(auth())
       .expect(200);
 
+    structureId = structure.body.id as string;
+
     invoiceId = (
       await ctx
         .http()
@@ -183,5 +186,108 @@ describe('Concurrency', () => {
     expect(await ctx.db.student.count({ where: { classArmId: armId } })).toBe(
       1,
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Generated identifiers
+  //
+  // A number is the highest existing one plus one, which is a maximum over
+  // every row and therefore has no row to lock. Without a lock, every
+  // concurrent writer read the same maximum, computed the same next number,
+  // and all but one were refused by the unique index — and because each retry
+  // recomputed the identical number, the retries collided too. Ten admissions
+  // at once lost four; eight verifications lost two, leaving those payments
+  // PENDING and the parents' balances untouched.
+  // ---------------------------------------------------------------------------
+
+  it('gives every simultaneous admission its own number', async () => {
+    const admit = (n: number) =>
+      ctx
+        .http()
+        .post('/api/students')
+        .set(auth())
+        .send({
+          firstName: `Burst${n}`,
+          lastName: 'Numbered',
+          gender: 'FEMALE',
+          admissionDate: '2025-09-15',
+        });
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => admit(i)),
+    );
+
+    // Not "most of them succeeded" — all of them. A registrar admitting a
+    // class should not have rows fail for reasons that are nothing to do with
+    // the data they typed.
+    expect(results.map((r) => r.status)).toEqual(Array(10).fill(201));
+
+    const numbers = results.map((r) => r.body.studentId as string);
+    expect(new Set(numbers).size).toBe(10);
+  });
+
+  it('gives every simultaneous verification its own receipt number', async () => {
+    // Six *different* invoices, which is the whole point. Payments against
+    // one invoice are already serialised by that invoice's row lock, so they
+    // never contend for a receipt number and a test using one invoice proves
+    // nothing — it passed with the serialisation removed. Different invoices
+    // take different row locks, so nothing orders them but the receipt lock.
+    // This is also the real case: a bursar clears a morning of transfers from
+    // six different families.
+    const students = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        ctx
+          .http()
+          .post('/api/students')
+          .set(auth())
+          .send({
+            firstName: `Payer${i}`,
+            lastName: 'Receipt',
+            gender: 'MALE',
+            admissionDate: '2025-09-15',
+          })
+          .expect(201),
+      ),
+    );
+
+    const assigned = await ctx
+      .http()
+      .post('/api/finance/invoices/assign')
+      .set(auth())
+      .send({
+        structureId,
+        studentIds: students.map((s) => s.body.id as string),
+      })
+      .expect(201);
+    const invoices = assigned.body.invoices as { id: string }[];
+    expect(invoices).toHaveLength(6);
+
+    const payments = await Promise.all(
+      invoices.map((invoice) =>
+        ctx.http().post('/api/finance/payments').set(auth()).send({
+          studentFeeId: invoice.id,
+          amount: 1000,
+          method: 'BANK_TRANSFER',
+          paidAt: '2025-10-01T10:00:00Z',
+        }),
+      ),
+    );
+    const ids = payments.map((p) => p.body.id as string);
+    expect(new Set(ids).size).toBe(6);
+
+    const verified = await Promise.all(ids.map((id) => verify(id)));
+
+    // A bursar clearing a morning's bank transfers verifies a batch. A failure
+    // here is money that stays PENDING while the screen looks finished.
+    expect(verified.map((r) => r.status)).toEqual(Array(6).fill(200));
+
+    const receipts = verified.map((r) => r.body.receiptNumber as string);
+    expect(new Set(receipts).size).toBe(6);
+    // And no gaps: a receipt book with holes is something somebody has to
+    // explain to an auditor.
+    const sequences = receipts
+      .map((value) => Number(value.split('/').pop()))
+      .sort((a, b) => a - b);
+    expect(sequences).toEqual([1, 2, 3, 4, 5, 6]);
   });
 });

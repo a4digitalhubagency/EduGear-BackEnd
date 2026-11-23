@@ -99,6 +99,59 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('the sending address, when Resend is the provider', () => {
+    const sending = {
+      ...valid,
+      EMAIL_PROVIDER: 'resend',
+      RESEND_API_KEY: 're_test_key',
+      FRONTEND_URL: 'https://www.edugear.ng',
+    };
+
+    // A provider will not send from a domain it cannot verify, and it refuses
+    // per message at send time — which the application never surfaces, because
+    // a failed invitation deliberately does not fail the request that
+    // triggered it. So the only place to catch it is the boot.
+    it('refuses the .env.example placeholder', () => {
+      expect(
+        problemsFrom({
+          ...sending,
+          EMAIL_FROM: 'EduGear <no-reply@example.com>',
+        }).join('\n'),
+      ).toMatch(/EMAIL_FROM/);
+    });
+
+    // Differs from the real domain by its TLD alone, which is precisely the
+    // kind of thing that survives being read through.
+    it('refuses the built-in default, whose domain A4 does not own', () => {
+      expect(
+        problemsFrom({
+          ...sending,
+          EMAIL_FROM: 'EduGear <no-reply@edugear.app>',
+        }).join('\n'),
+      ).toMatch(/EMAIL_FROM/);
+    });
+
+    it('accepts a real sending address', () => {
+      expect(
+        problemsFrom({
+          ...sending,
+          EMAIL_FROM: 'EduGear <no-reply@edugear.ng>',
+        }),
+      ).toHaveLength(0);
+    });
+
+    // Nothing is being sent, so nothing can be refused.
+    it('says nothing about it when the provider is console', () => {
+      expect(
+        problemsFrom({
+          ...valid,
+          EMAIL_PROVIDER: 'console',
+          EMAIL_FROM: 'EduGear <no-reply@example.com>',
+        }),
+      ).toHaveLength(0);
+    });
+  });
+
   it('catches a connection string that still carries its own key name', () => {
     // Exactly what a KEY=value block pasted into a dashboard value field looks
     // like. It is a non-empty string, so every other check passes, and it fails
@@ -196,6 +249,10 @@ describe('validateEnv', () => {
         EMAIL_PROVIDER: 'resend',
         RESEND_API_KEY: 're_test_key',
         FRONTEND_URL: 'https://app.edugear.ng',
+        // A real sender too: this case is about the link in the message, and
+        // leaving EMAIL_FROM on its default would now fail for the other
+        // reason and tell us nothing about FRONTEND_URL.
+        EMAIL_FROM: 'EduGear <no-reply@edugear.ng>',
       }),
     ).toHaveLength(0);
 

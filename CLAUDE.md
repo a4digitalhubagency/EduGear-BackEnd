@@ -133,6 +133,34 @@ Route metadata comes from [src/common/decorators/index.ts](src/common/decorators
 `PermissionsGuard` is also the last line of tenant defence — it rejects any authenticated request that
 reached a handler without a resolved tenant unless the route is `@AllowNoTenant()`.
 
+## Email verification — what it actually gates
+
+Registration hands back a working session before anybody has clicked anything, which is right: a
+school should be usable in its first minute. But `emailVerifiedAt` used to be written and reported
+and **checked nowhere** — `EMAIL_NOT_VERIFIED` sat in the error enum unthrown — so the control
+looked present in review while providing nothing.
+
+Two places now turn on it, chosen narrowly:
+
+- **A password reset is never sent to an unverified address.** This is the step that turned a typo
+  into a stolen school: `school@gmial` registers fine and mails the activation link to whoever owns
+  the typo, which tells them the account exists; a reset then handed them the only `PROPRIETOR`
+  login, deliberately the one role a school cannot take away. The response is **deliberately
+  unchanged** — answering differently would make the endpoint an oracle for which addresses are
+  registered but unverified, a worse leak than the one being closed. The refusal is audited.
+- **Parents cannot be invited to the portal from an unverified account**
+  ([portal-access.service.ts](src/portal/portal-access.service.ts)). That is where families begin
+  handing a school their children's data.
+
+**Staff invitations are deliberately still open**, as is everything else. A gate on
+`UsersService.createInvitation` was tried and reverted: it put a hard stop at the most common first
+action a school takes. If that decision is revisited, note it breaks ~40 fixtures, which is a fair
+measure of how central inviting staff is to setting a school up.
+
+`registerSchool` in [test/utils/test-app.ts](test/utils/test-app.ts) confirms the owner's address by
+default, because that is what a real school does next. Pass `verified: false` to test the rules that
+turn on it, and say so in the test name.
+
 ## Authorization
 
 Permission-based, never `if (role === 'X')`. Roles are bundles of permissions, and the six system roles
@@ -155,7 +183,18 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 - Throw `AppException` with an `ErrorCode` ([src/common/errors/](src/common/errors/)); a single global
   filter renders the standard body (`errorCode`, `requestId`, `path`, …). Stack traces, SQL and Prisma
-  internals must never reach a client.
+  internals must never reach a client. **Nor a dependency's exception class name:** the filter
+  forwards whatever an `HttpException` carries, and `ThrottlerException` names itself in its own
+  message — so whoever hit the login rate limit was shown "ThrottlerException: Too Many Requests".
+  `presentableMessage` drops a message that opens with a class name in favour of ours, matching the
+  shape rather than naming the one library, and it covers both the object and bare-string forms of
+  `getResponse()` because that library uses the string one.
+- **`main.ts` loads `.env.local` then `.env` itself.** `ConfigModule` does it too, but not until
+  `AppModule` is constructed, and `validateEnv` runs at module load because Sentry has to be
+  initialised before the modules it instruments are imported. Without the explicit load,
+  `npm run start:dev` failed on a fully populated `.env` and told the developer to go and read
+  `.env.example`. CI and Railway both inject variables into the process environment, so neither ever
+  exercises file loading — a developer's first clone is the only path that does.
 - Never return Prisma models directly — map to a DTO. Global `ValidationPipe` runs with `whitelist` +
   `forbidNonWhitelisted`, so every input needs a DTO.
 - `AuditService.record()` never throws; a failed audit write must not roll back the business operation.
@@ -166,6 +205,15 @@ are **copied into each school** at provisioning so a school can retune its own r
   because a missing variable once published the whole API surface on the live service. The one sanctioned exception is
   [src/common/constants/throttle.ts](src/common/constants/throttle.ts), which reads `process.env`
   directly because `@Throttle()` decorators evaluate before DI exists.
+- **`EMAIL_FROM` must be on a domain verified with the provider**, and production refuses to boot
+  with a placeholder while `EMAIL_PROVIDER=resend`. A provider rejects an unverifiable sender per
+  message at send time, and nothing in the application surfaces that: a failed invitation
+  deliberately does not fail the request that triggered it, so a school sees "invited" and the
+  parent receives nothing. The two placeholders are easy to ship — `.env.example` carried
+  `example.com`, and this file's own default was `edugear.app`, differing from the real domain by
+  its TLD alone. It also now gates a feature: inviting parents to the portal requires the inviting
+  account's address to have been verified, and that verification arrives by email, so broken
+  sending presents as a permissions error nobody can explain.
 - **Redis is required in production** and optional everywhere else. `RedisService.client` is `null`
   when `REDIS_URL` is unset, and callers fall back to in-process state — correct for a single instance
   only, which is why [env.validation.ts](src/config/env.validation.ts) refuses to boot production
@@ -443,6 +491,25 @@ send time.
 [row-lock.ts](src/database/row-lock.ts). Take it at the start of any transaction whose check guards
 its write — capacity, overpayment, a sheet's DRAFT status. `lockRows` sorts ids to avoid deadlock.
 
+`lockSchoolScope(tx, scope, schoolId)` is for a check that spans rows, where there is no single row
+to lock: a storage quota is a sum over every file, and **a generated identifier is a maximum over
+every row**. Admission and receipt numbers both take it.
+
+**Do not replace that lock with more retries.** It was retries: each writer read the same maximum,
+computed the same next value, and the unique index refused all but one — and since every retry
+recomputed the identical number, the retries collided too. Ten simultaneous admissions lost four;
+eight payment verifications lost two, leaving that money PENDING with the screen looking finished.
+Retry-on-conflict is the right shape when conflicts are rare and independent; here every writer
+contends for one value by construction. The retry loops remain as a backstop for a number that
+arrived some other way, not for ordinary concurrency. `concurrency.e2e-spec.ts` fails if the lock
+goes — and its receipt test deliberately uses **six different invoices**, because payments against
+one invoice are already serialised by that invoice's row lock and a single-invoice test passes with
+the serialisation removed.
+
+**Lock order is advisory-then-row, everywhere.** `createWithGeneratedNumber`, the importer and
+`PaymentsService.verify` all take the school scope before any row lock. Two paths taking the same
+two locks in opposite orders is the textbook deadlock.
+
 ### Granting permissions (Phase 5)
 
 **You cannot grant a permission you do not hold.** [roles.service.ts](src/tenants/roles.service.ts)
@@ -471,6 +538,16 @@ feature than a weekly pattern. Anything new that reads a setting should degrade 
 than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
 [admission-number.ts](src/students/admission-number.ts) and
 [receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.
+
+**The query feeding those parsers has to ignore the prefix too**, and for a long time the admission
+one did not. It searched for numbers *starting with* the year, which `GFA/2026/0001` does not — so
+a school that set a prefix before admitting anybody found the maximum came back empty, the next
+number was computed as `0001` again, and the unique index refused it on every retry. That school
+could admit exactly one student, ever, with no concurrency involved. Use
+`admissionNumbersIssuedIn(year)`, which matches both shapes; the receipt lookup already did this
+with `contains`. The existing settings test was one admission short of catching it, because its
+first number was unprefixed and therefore findable — so it now admits a third student, and there is
+a second test for a school that was prefixed from the start.
 
 ### Files
 

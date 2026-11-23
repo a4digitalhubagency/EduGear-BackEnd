@@ -2,6 +2,38 @@
 // modules it watches are loaded.
 import { initSentry } from './observability/sentry';
 import { EnvironmentConfigError, validateEnv } from './config/env.validation';
+import * as path from 'node:path';
+
+/**
+ * Loads `.env.local` then `.env` into `process.env`.
+ *
+ * `ConfigModule.forRoot({ envFilePath })` already does this — but it does it
+ * when `AppModule` is constructed, and the validation below runs at module
+ * load, because Sentry has to be initialised before the modules it
+ * instruments are imported. So at that point nothing has read the files, and
+ * `npm run start:dev` failed on a fully populated `.env` telling the developer
+ * to go and look at `.env.example`.
+ *
+ * That went unnoticed for months because the two environments that run this
+ * code — CI and Railway — both inject variables into the process environment,
+ * so neither ever exercises file loading. A developer's first clone is the
+ * only path that does, and it is the one path no automated check covers.
+ *
+ * `loadEnvFile` never overwrites a variable that is already set, so a real
+ * deployment's injected values still win and the precedence here matches
+ * ConfigModule's: `.env.local` first, then `.env`.
+ */
+function loadEnvFiles(): void {
+  for (const file of ['.env.local', '.env']) {
+    try {
+      process.loadEnvFile(path.join(process.cwd(), file));
+    } catch {
+      // Absent is normal: in CI and on Railway the platform injects them.
+    }
+  }
+}
+
+loadEnvFiles();
 
 /**
  * Misconfiguration is the normal way a first deploy fails, so it gets a clean

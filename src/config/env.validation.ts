@@ -362,6 +362,32 @@ export function validateEnv(
           'every invitation and password-reset link would be unusable',
       );
     }
+    // The sending address has to be on a domain verified with the provider, or
+    // the provider refuses the message — at send time, per message, silently
+    // as far as the application is concerned. `AuditService`-style
+    // never-throwing side effects make that worse: a failed invitation does
+    // not fail the request that triggered it, so a school would see "invited"
+    // on screen and the parent would receive nothing.
+    //
+    // Both placeholders are easy to ship by accident. `.env.example` carries
+    // `no-reply@example.com`, and the default in this file is
+    // `no-reply@edugear.app` — a domain A4 does not own, differing from the
+    // real one by its TLD, which is exactly the kind of thing that survives a
+    // read-through.
+    //
+    // This matters more than it used to: inviting parents to the portal now
+    // requires the inviting account's own address to have been verified, and
+    // that verification arrives by email. If sending is broken, a school
+    // cannot verify, so it cannot invite parents, and the failure presents as
+    // a permissions error nobody can explain.
+    if (/example\.com|edugear\.app/i.test(config.EMAIL_FROM ?? '')) {
+      problems.push(
+        'EMAIL_FROM: still a placeholder address while EMAIL_PROVIDER=resend ' +
+          '— set it to an address on a domain verified with Resend, e.g. ' +
+          '"EduGear <no-reply@edugear.ng>". A provider will not send from a ' +
+          'domain it cannot verify, and nothing in the app will report it',
+      );
+    }
   }
 
   // Evaluated even when the checks above failed, so one pass reports the lot.

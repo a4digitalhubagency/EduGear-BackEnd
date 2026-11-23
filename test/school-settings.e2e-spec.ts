@@ -252,6 +252,37 @@ describe('School settings', () => {
         .set(head())
         .expect(200);
       expect(ada.body.studentId).toBe(`${year}/0001`);
+
+      // One more, and this is the line that matters: the highest number on
+      // file is now itself prefixed. Reading it back is what the lookup used
+      // to get wrong — it searched for numbers *starting with* the year, which
+      // "BSC/2026/0002" does not. The max came back as nothing, the next
+      // number was computed as 0001 again, and the unique index refused it on
+      // every retry. Up to here the test passed, because the first number was
+      // unprefixed and therefore findable.
+      const third = await admit('Chidi').expect(201);
+      expect(third.body.studentId).toBe(`BSC/${year}/0003`);
+    });
+
+    it('keeps numbering a school that had a prefix from the start', async () => {
+      // The case above always had one unprefixed number to find. A school that
+      // sets its prefix before admitting anybody has none, so it could admit
+      // exactly one student and then every further admission failed with
+      // "Could not allocate an admission number" — no concurrency needed.
+      await setSettings({ admissionNumberPrefix: 'GFA' }).expect(200);
+
+      const numbers: string[] = [];
+      for (const name of ['Ada', 'Bola', 'Chidi', 'Dayo']) {
+        const created = await admit(name).expect(201);
+        numbers.push(created.body.studentId as string);
+      }
+
+      expect(numbers).toEqual([
+        `GFA/${year}/0001`,
+        `GFA/${year}/0002`,
+        `GFA/${year}/0003`,
+        `GFA/${year}/0004`,
+      ]);
     });
 
     it('applies the prefix to imported students too', async () => {

@@ -11,7 +11,7 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
-import { lockRow } from '../database/row-lock';
+import { lockRow, lockSchoolScope } from '../database/row-lock';
 import { InAppNotificationsService } from '../notifications/in-app-notifications.service';
 import { FilesService } from '../files/files.service';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
@@ -133,6 +133,20 @@ export class PaymentsService {
     for (let attempt = 0; attempt < RECEIPT_ATTEMPTS; attempt++) {
       try {
         await this.prisma.$transaction(async (tx) => {
+          // Serialise receipt numbering across the school. "The highest
+          // receipt issued this year" is a maximum over every payment, so
+          // there is no row to lock — and without this, a bursar clearing a
+          // morning's transfers lost two verifications in eight to "Could not
+          // allocate a receipt number", leaving those payments PENDING and
+          // the parents' balances untouched.
+          //
+          // Taken before the invoice's row lock, widest first, and nothing
+          // else takes these two in the other order.
+          const schoolId = RequestContext.getTenantId();
+          if (schoolId) {
+            await lockSchoolScope(tx, 'receiptNumber', schoolId);
+          }
+
           // Serialise every writer to this invoice. Without the lock, two
           // payments verified together each recompute the balance before the
           // other commits, and one of them silently drops out of amountPaid.
