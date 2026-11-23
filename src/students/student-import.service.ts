@@ -6,10 +6,14 @@ import { AppException } from '../common/errors/app.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma, TxClient } from '../database/prisma.service';
-import { lockRows } from '../database/row-lock';
+import { lockRows, lockSchoolScope } from '../database/row-lock';
 import { NG_PHONE_REGEX } from '../tenants/dto/school.dto';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
-import { formatAdmissionNumber, nextSequence } from './admission-number';
+import {
+  admissionNumbersIssuedIn,
+  formatAdmissionNumber,
+  nextSequence,
+} from './admission-number';
 import { BulkAdmitStudentsDto, MAX_BULK_STUDENTS } from './dto/bulk.dto';
 import {
   ImportMode,
@@ -326,7 +330,7 @@ export class StudentImportService {
     } else if (options.dryRun && valid.length > 0) {
       // Show the numbers these rows would get. They are a preview: another
       // admission in the meantime can move them along.
-      const numbers = await this.allocateNumbers(this.prisma, valid);
+      const numbers = await this.allocateNumbers(this.prisma, valid, schoolId);
       valid.forEach((state, index) => (state.admissionNumber = numbers[index]));
     }
 
@@ -985,7 +989,7 @@ export class StudentImportService {
       }
     }
 
-    const numbers = await this.allocateNumbers(tx, rows);
+    const numbers = await this.allocateNumbers(tx, rows, schoolId);
 
     // Only parents that a written row actually needs are created.
     const neededKeys: string[] = [];
@@ -1098,7 +1102,17 @@ export class StudentImportService {
   private async allocateNumbers(
     client: TxClient,
     rows: RowState[],
+    schoolId: string,
   ): Promise<string[]> {
+    // The same lock the single-student path takes, so an import running
+    // beside a registrar admitting one student cannot be handed numbers that
+    // collide. A dry run takes it too and then rolls nothing back, which
+    // costs a moment of contention and keeps the previewed numbers honest.
+    //
+    // Taken before any arm row lock, matching the order in
+    // StudentsService.createWithGeneratedNumber.
+    await lockSchoolScope(client, 'admissionNumber', schoolId);
+
     const years = new Set(
       rows
         .filter((state) => !state.data.studentId)
@@ -1109,7 +1123,7 @@ export class StudentImportService {
     const next = new Map<number, number>();
     for (const year of years) {
       const existing = await client.student.findMany({
-        where: { studentId: { startsWith: `${year}/` } },
+        where: admissionNumbersIssuedIn(year),
         select: { studentId: true },
       });
       next.set(

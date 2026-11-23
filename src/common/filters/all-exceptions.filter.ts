@@ -204,19 +204,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
         statusCode: status,
         errorCode:
           (record.errorCode as string) ?? this.defaultCodeForStatus(status),
-        message:
-          (record.message as string) ??
-          (record.error as string) ??
-          this.defaultMessage(status),
+        message: this.presentableMessage(
+          (record.message as string) ?? (record.error as string),
+          status,
+        ),
         details: record.details,
       };
     }
 
+    // A library that passes a bare string to `super()` lands here rather than
+    // in the object branch above — which is exactly what ThrottlerException
+    // does, so this path needs the same guard.
     return {
       statusCode: status,
       errorCode: this.defaultCodeForStatus(status),
-      message:
-        typeof payload === 'string' ? payload : this.defaultMessage(status),
+      message: this.presentableMessage(
+        typeof payload === 'string' ? payload : undefined,
+        status,
+      ),
     };
   }
 
@@ -285,8 +290,40 @@ export class AllExceptionsFilter implements ExceptionFilter {
   }
 
   private defaultMessage(status: HttpStatus): string {
-    return status >= 500
-      ? 'An unexpected error occurred'
-      : 'Request could not be completed';
+    switch (status) {
+      case HttpStatus.TOO_MANY_REQUESTS:
+        // Written out because this is the one library-thrown status a real
+        // user meets, and the Retry-After header carries the number — saying
+        // "60 seconds" here would be a second source of truth for it.
+        return 'Too many requests. Please wait a moment and try again.';
+      default:
+        return status >= 500
+          ? 'An unexpected error occurred'
+          : 'Request could not be completed';
+    }
+  }
+
+  /**
+   * Keeps a library's internal exception name out of a client-facing message.
+   *
+   * Every message this application writes itself arrives through
+   * `AppException`, deliberately worded. A message assembled by a dependency
+   * does not get the same care: `ThrottlerException` sets its own to
+   * `"ThrottlerException: Too Many Requests"`, and because this filter
+   * forwards whatever an `HttpException` carries, that string was being shown
+   * to whoever hit the login rate limit.
+   *
+   * So a message that opens with a class name is dropped in favour of ours.
+   * Matching the shape rather than naming `ThrottlerException` means the next
+   * dependency to do this is covered without anyone noticing it happened.
+   */
+  private presentableMessage(
+    message: string | undefined,
+    status: HttpStatus,
+  ): string {
+    if (!message) return this.defaultMessage(status);
+
+    const looksInternal = /^[A-Z][A-Za-z0-9]*(Exception|Error)\b/.test(message);
+    return looksInternal ? this.defaultMessage(status) : message;
   }
 }

@@ -41,6 +41,18 @@ describe('Rate limiting', () => {
     const blocked = await attempt();
     expect(blocked.status).toBe(429);
     expect(blocked.body.errorCode).toBe('RATE_LIMITED');
+
+    // The one library-thrown status a real user meets, so the wording is
+    // ours. ThrottlerException names itself in its own message and the
+    // exception filter used to forward that verbatim, so a parent locked out
+    // on a slow phone was shown "ThrottlerException: Too Many Requests".
+    expect(blocked.body.message).not.toMatch(/Exception|Error:/);
+    expect(blocked.body.message).toBe(
+      'Too many requests. Please wait a moment and try again.',
+    );
+    // Retry-After carries the number; the message deliberately does not, so
+    // there is only one source of truth for it.
+    expect(blocked.headers['retry-after']).toBeDefined();
   });
 
   it('counts each client separately', async () => {

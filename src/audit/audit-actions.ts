@@ -10,6 +10,8 @@ export const AUDIT_ACTIONS = {
   AUTH_SCHOOL_SWITCHED: 'auth.school.switched',
   AUTH_PASSWORD_CHANGED: 'auth.password.changed',
   AUTH_PASSWORD_RESET_REQUESTED: 'auth.password.reset_requested',
+  AUTH_PASSWORD_RESET_REFUSED_UNVERIFIED:
+    'auth.password.reset_refused_unverified',
   AUTH_PASSWORD_RESET_COMPLETED: 'auth.password.reset_completed',
   AUTH_EMAIL_VERIFIED: 'auth.email.verified',
   AUTH_ACCOUNT_LOCKED: 'auth.account.locked',
