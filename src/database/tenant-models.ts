@@ -69,6 +69,9 @@ export const GLOBAL_MODELS: readonly string[] = [
   'WebhookEvent',
   // A4's own staff belong to no school, which is the entire point of them.
   'PlatformAdmin',
+  // One incident can span several schools or none, and it is A4 that records
+  // it. `affectedSchoolIds` carries the blast radius instead of a tenant column.
+  'BreachRecord',
 ];
 
 export function isTenantScoped(

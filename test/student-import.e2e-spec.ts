@@ -631,4 +631,197 @@ describe('Student import', () => {
     });
     expect(latest?.metadata).toMatchObject({ source: 'csv', imported: 1 });
   });
+  // -------------------------------------------------------------------------
+  // Sensitive columns — NDP Act s.26(2) / s.30(1)(a)
+  //
+  // An import is the one path that can put thousands of special-category
+  // values in at once, which makes it the path where an unrecorded lawful
+  // basis does the most damage — and the easiest to miss, because the columns
+  // sit in the middle of a spreadsheet of ordinary ones.
+  // -------------------------------------------------------------------------
+
+  describe('consent for sensitive columns', () => {
+    const CONSENT = { method: 'ADMISSION_FORM' };
+
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      firstName: 'Nkem',
+      lastName: 'Eze',
+      gender: 'F',
+      admissionDate: '15/09/2025',
+      ...overrides,
+    });
+
+    it('fails a row holding a sensitive value with no declaration', async () => {
+      const response = await json([row({ genotype: 'AS' })]).expect(200);
+
+      expect(response.body.imported).toBe(0);
+      expect(response.body.rows[0].errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'genotype' }),
+        ]),
+      );
+      expect(response.body.rows[0].errors[0].message).toContain('consent');
+
+      expect(await ctx.db.student.count({ where: { genotype: 'AS' } })).toBe(0);
+    });
+
+    it('names every sensitive column on the row, not just the first', async () => {
+      const response = await json([
+        row({ genotype: 'AS', religion: 'Islam', bloodGroup: 'O+' }),
+      ]).expect(200);
+
+      const fields = response.body.rows[0].errors.map(
+        (issue: { field: string }) => issue.field,
+      );
+      expect(fields).toEqual(
+        expect.arrayContaining(['genotype', 'religion', 'bloodGroup']),
+      );
+    });
+
+    it('imports and records the declaration against each row', async () => {
+      const response = await json([row({ genotype: 'AS', lga: 'Nsukka' })], {
+        sensitiveDataConsent: CONSENT,
+      }).expect(200);
+      expect(response.body.imported).toBe(1);
+
+      const student = await ctx.db.student.findFirstOrThrow({
+        where: { schoolId: school.schoolId, genotype: 'AS' },
+      });
+      expect(student.sensitiveConsentAt).toBeInstanceOf(Date);
+      expect(student.sensitiveConsentMethod).toBe('ADMISSION_FORM');
+      // A file-level declaration names no individual signatory: the paper
+      // forms are the record of who signed each one.
+      expect(student.sensitiveConsentBy).toBeNull();
+      expect(student.sensitiveConsentWithdrawnAt).toBeNull();
+    });
+
+    // An import of names and classes must be unaffected by any of this.
+    it('leaves rows holding nothing sensitive alone', async () => {
+      const response = await json([row({ lastName: 'Plain' })]).expect(200);
+      expect(response.body.imported).toBe(1);
+
+      const student = await ctx.db.student.findFirstOrThrow({
+        where: { schoolId: school.schoolId, lastName: 'Plain' },
+      });
+      expect(student.sensitiveConsentAt).toBeNull();
+    });
+
+    // Otherwise a declaration would attach consent records to students whose
+    // parents were never asked anything.
+    it('records nothing for a plain row even under a declaration', async () => {
+      await json([row({ lastName: 'Untouched' })], {
+        sensitiveDataConsent: CONSENT,
+      }).expect(200);
+
+      const student = await ctx.db.student.findFirstOrThrow({
+        where: { schoolId: school.schoolId, lastName: 'Untouched' },
+      });
+      expect(student.sensitiveConsentAt).toBeNull();
+      expect(student.sensitiveConsentMethod).toBeNull();
+    });
+
+    it('rejects a declaration with an invented method', async () => {
+      await json([row({ genotype: 'AS' })], {
+        sensitiveDataConsent: { method: 'VERBAL' },
+      }).expect(400);
+    });
+
+    it('fails the whole file in ATOMIC mode for one unauthorised row', async () => {
+      const response = await json([
+        row({ lastName: 'Fine' }),
+        row({ lastName: 'Unauthorised', genotype: 'AS' }),
+      ]).expect(200);
+
+      expect(response.body.imported).toBe(0);
+      expect(
+        await ctx.db.student.count({
+          where: { schoolId: school.schoolId, lastName: 'Fine' },
+        }),
+      ).toBe(0);
+    });
+
+    it('works through the CSV route too', async () => {
+      const file = `Surname,First Name,Sex,Admission Date,Genotype\nEze,Chidi,M,15/09/2025,AA`;
+
+      const refused = await csv(file).expect(200);
+      expect(refused.body.imported).toBe(0);
+
+      const accepted = await csv(file, {
+        sensitiveDataConsent: CONSENT,
+      }).expect(200);
+      expect(accepted.body.imported).toBe(1);
+
+      const student = await ctx.db.student.findFirstOrThrow({
+        where: { schoolId: school.schoolId, genotype: 'AA' },
+      });
+      expect(student.sensitiveConsentMethod).toBe('ADMISSION_FORM');
+    });
+
+    // The deprecated bulk endpoint sends full admission payloads, so each row
+    // can name its own signatory. Falling back to a blanket declaration there
+    // would quietly replace a real name with nothing.
+    it('keeps a per-student signatory on the bulk endpoint', async () => {
+      await ctx
+        .http()
+        .post('/api/students/bulk')
+        .set(auth())
+        .send({
+          students: [
+            {
+              firstName: 'Zara',
+              lastName: 'Bello',
+              gender: 'FEMALE',
+              admissionDate: '2025-09-15',
+              genotype: 'AS',
+              sensitiveDataConsent: {
+                givenBy: 'Alhaji Bello',
+                method: 'CONSENT_FORM',
+              },
+            },
+          ],
+        })
+        .expect(201);
+
+      const student = await ctx.db.student.findFirstOrThrow({
+        where: { schoolId: school.schoolId, lastName: 'Bello' },
+      });
+      expect(student.sensitiveConsentBy).toBe('Alhaji Bello');
+      expect(student.sensitiveConsentMethod).toBe('CONSENT_FORM');
+    });
+
+    it('refuses the bulk endpoint without consent', async () => {
+      await ctx
+        .http()
+        .post('/api/students/bulk')
+        .set(auth())
+        .send({
+          students: [
+            {
+              firstName: 'Nope',
+              lastName: 'Nothere',
+              gender: 'MALE',
+              admissionDate: '2025-09-15',
+              genotype: 'AS',
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(
+        await ctx.db.student.count({
+          where: { schoolId: school.schoolId, lastName: 'Nothere' },
+        }),
+      ).toBe(0);
+    });
+
+    it('says so in the template, so the column is not a surprise', async () => {
+      const response = await ctx
+        .http()
+        .get('/api/students/import/template')
+        .set(auth())
+        .expect(200);
+
+      expect(response.text).toContain('Genotype');
+    });
+  });
 });

@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { Response } from 'express';
 import { StudentStatus } from '@prisma/client';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AUDIT_ACTIONS } from '../audit/audit-actions';
@@ -48,6 +50,8 @@ import {
   AdmitStudentDto,
   ChangeStudentStatusDto,
   QueryStudentsDto,
+  SensitiveDataConsentDto,
+  SensitiveDataErasureDto,
   StudentDto,
   StudentProfileDto,
   UpdateStudentDto,
@@ -61,6 +65,10 @@ import { MAX_UPLOAD_BYTES } from '../files/file-policy';
 import { buildTemplateCsv } from './import/import-columns';
 import { StudentImportService } from './student-import.service';
 import { StudentsService } from './students.service';
+import {
+  StudentExport,
+  StudentExportService,
+} from '../retention/student-export.service';
 
 @ApiTags('Students')
 @ApiBearerAuth()
@@ -71,6 +79,7 @@ export class StudentsController {
     private readonly importer: StudentImportService,
     private readonly audit: AuditService,
     private readonly accessControl: AccessControlService,
+    private readonly exporter: StudentExportService,
   ) {}
 
   @Post()
@@ -92,6 +101,7 @@ export class StudentsController {
         classArmId: student.classArmId,
       },
     });
+    await this.auditConsent(student, dto.sensitiveDataConsent);
     return student;
   }
 
@@ -246,7 +256,41 @@ export class StudentsController {
       entityId: student.id,
       metadata: { fields: Object.keys(dto) },
     });
+    await this.auditConsent(student, dto.sensitiveDataConsent);
     return student;
+  }
+
+  /**
+   * Records the consent as its own event when a request carried one.
+   *
+   * Separate from the create/update entry because this is the thing a school
+   * has to be able to produce on demand: section 26(2) of the NDP Act puts the
+   * burden of demonstrating consent on them, and "the student record was
+   * edited on the 4th" does not demonstrate it. Its own action name is what
+   * makes the trail searchable for it.
+   *
+   * **The signatory's name is deliberately not in the metadata.** It is on the
+   * student row, where the retention schedule destroys it with the data it
+   * authorises; an audit entry outlives that by years, so copying the name
+   * here would quietly reinstate the thing minimisation just removed. The
+   * entry proves the act and its date — the row says who.
+   */
+  private async auditConsent(
+    student: StudentDto,
+    consent: SensitiveDataConsentDto | undefined,
+  ): Promise<void> {
+    if (!consent) return;
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_SENSITIVE_CONSENT_RECORDED,
+      entityType: 'Student',
+      entityId: student.id,
+      description: `Recorded parental consent to sensitive data for ${student.fullName}`,
+      metadata: {
+        method: consent.method,
+        givenAt: (consent.givenAt ?? new Date()).toISOString(),
+      },
+    });
   }
 
   @Patch(':id/status')
@@ -378,5 +422,98 @@ export class StudentsController {
       metadata: { fields: ['photoUrl'] },
     });
     return student;
+  }
+
+  @Delete(':id/sensitive-data')
+  @RequirePermissions(PERMISSIONS.STUDENTS_UPDATE)
+  @ApiOperation({
+    summary: 'Withdraw consent and erase a student’s sensitive personal data',
+    description:
+      'Clears genotype, blood group, religion, state of origin and LGA, and ' +
+      'nothing else — and withdraws the parental consent record behind them, ' +
+      'in the same write. These five are the only fields on a student record ' +
+      'held under consent (NDP Act s.30(1)(a), given by a parent under ' +
+      's.31(1)); everything else rests on the contract or a legal ' +
+      'obligation. Because s.35(2) requires withdrawing consent to be as ' +
+      'easy as giving it, this is honoured unconditionally and immediately. ' +
+      'Succeeds when there is nothing to erase. Re-sending ' +
+      '`sensitiveDataConsent` on the student is what reinstates it.',
+  })
+  @ApiOkResponse({ type: SensitiveDataErasureDto })
+  async eraseSensitiveData(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SensitiveDataErasureDto> {
+    const result = await this.students.eraseSensitiveData(id);
+
+    // Recorded even when nothing was erased: "we asked and there was nothing
+    // held" is exactly what a school needs to show a regulator, and it is
+    // indistinguishable from "never asked" if we only log the other case.
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_SENSITIVE_DATA_ERASED,
+      entityType: 'Student',
+      entityId: id,
+      description: result.erasedFields.length
+        ? `Erased sensitive data for ${result.student.fullName}: ${result.erasedFields.join(', ')}`
+        : `No sensitive data held for ${result.student.fullName}`,
+      // Field names only. The values were the thing being erased.
+      metadata: {
+        erasedFields: result.erasedFields,
+        // Recorded separately because it is a different fact: the data is
+        // gone *and* the school no longer claims a basis to re-enter it.
+        consentWithdrawn: result.consentWithdrawn,
+      },
+    });
+
+    return result;
+  }
+
+  @Get(':id/export')
+  // Every domain the export touches, not just students.read. The export is
+  // the most concentrated view of a child this application can produce, and
+  // it would otherwise be a way to read fees and results without holding the
+  // permission to read fees and results.
+  @RequirePermissions(
+    PERMISSIONS.STUDENTS_READ,
+    PERMISSIONS.GUARDIANS_READ,
+    PERMISSIONS.FINANCE_READ,
+    PERMISSIONS.RESULTS_READ,
+    PERMISSIONS.ATTENDANCE_READ,
+  )
+  @ApiOperation({
+    summary: 'Export everything held about a student',
+    description:
+      'A structured, machine-readable copy of the student’s record, for a ' +
+      'subject access request under NDP Act s.34(1)(b) or portability under ' +
+      's.38. Downloads as JSON.',
+  })
+  @ApiProduces('application/json')
+  async exportRecord(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StudentExport> {
+    const data = await this.exporter.export(id);
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="edugear-student-${data.student.admissionNumber as string}.json"`,
+    );
+
+    // Audited as its own action: a copy of a child's whole record leaving the
+    // system is exactly the event a school needs to be able to account for,
+    // and it must not look like an ordinary read.
+    await this.audit.record({
+      action: AUDIT_ACTIONS.STUDENT_RECORD_EXPORTED,
+      entityType: 'Student',
+      entityId: id,
+      description: `Exported the full record for ${data.student.lastName as string}, ${data.student.firstName as string}`,
+      metadata: {
+        format: data.format,
+        guardians: data.guardians.length,
+        invoices: data.finance.length,
+        results: data.results.length,
+      },
+    });
+
+    return data;
   }
 }

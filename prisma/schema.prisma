@@ -98,22 +98,22 @@ enum VerificationTokenType {
 
 /// The tenant. Everything school-owned hangs off this row.
 model School {
-  id          String       @id @default(uuid()) @db.Uuid
+  id             String       @id @default(uuid()) @db.Uuid
   /// Public, human-friendly tenant handle (used in URLs/subdomains later).
-  slug        String       @unique
-  name        String
-  shortName   String?
-  email       String
-  phone       String?
-  addressLine String?
-  city        String?
-  state       String?
-  country     String       @default("NG")
-  logoUrl     String?
-  motto       String?
-  status      SchoolStatus @default(PENDING)
-  timezone    String       @default("Africa/Lagos")
-  currency    String       @default("NGN")
+  slug           String       @unique
+  name           String
+  shortName      String?
+  email          String
+  phone          String?
+  addressLine    String?
+  city           String?
+  state          String?
+  country        String       @default("NG")
+  logoUrl        String?
+  motto          String?
+  status         SchoolStatus @default(PENDING)
+  timezone       String       @default("Africa/Lagos")
+  currency       String       @default("NGN")
   /// Upload ceiling in megabytes, set by A4 rather than by the school. Null
   /// means the platform default — a school must not be able to raise its own.
   storageQuotaMb Int?
@@ -121,20 +121,20 @@ model School {
   /// Paystack subaccount this school's fees settle into, so money goes to the
   /// school's own bank and never through EduGear's account. Null means online
   /// payments are refused: the alternative is settling into EduGear's account.
-  paystackSubaccountCode  String?
+  paystackSubaccountCode String?
   /// Enough to recognise the chosen account, and no more. The account number
   /// itself is Paystack's to hold — a subaccount is updated by its code, so
   /// nothing here needs to read it back.
-  settlementBankCode      String?
-  settlementBankName      String?
+  settlementBankCode     String?
+  settlementBankName     String?
   /// As the bank returned it, not as anyone typed it.
-  settlementAccountName   String?
-  settlementAccountLast4  String?
+  settlementAccountName  String?
+  settlementAccountLast4 String?
 
   /// Soft-delete marker; tenant data is never hard-deleted on cancellation.
-  deletedAt   DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   roles                Role[]
   memberships          Membership[]
@@ -429,6 +429,29 @@ model ClassArm {
 // Students and guardians (schema only in Phase 0 — modules land in Phase 1)
 // ---------------------------------------------------------------------------
 
+/// How a parent's consent to the sensitive fields was obtained.
+///
+/// Every value names a *documented* act. There is deliberately no VERBAL
+/// option: section 26(2) of the NDP Act puts the burden of demonstrating
+/// consent on the controller, and "they said yes at the gate" is not something
+/// a school can show a regulator eighteen months later.
+enum ConsentMethod {
+  /// The consent box on the school's own admission form — the common case,
+  /// and the one Nigerian schools already have on paper.
+  ADMISSION_FORM
+  /// A separate signed consent form, usually collected after admission to
+  /// cover a field the admission form did not ask about.
+  CONSENT_FORM
+  /// Reserved. The parent portal has no consent control yet, so nothing in
+  /// the application can produce this value today — a school recording it
+  /// would be describing something that does not exist. It is kept because
+  /// adding the portal route later should not need a migration, and because
+  /// the enum is the honest place to record that the gap is known.
+  PORTAL
+
+  @@map("consent_methods")
+}
+
 model Student {
   id            String        @id @default(uuid()) @db.Uuid
   schoolId      String        @db.Uuid
@@ -445,6 +468,13 @@ model Student {
   photoUrl      String?
   admissionDate DateTime      @db.Date
   status        StudentStatus @default(ACTIVE)
+  /// When the student stopped being enrolled. Set on the move to GRADUATED or
+  /// WITHDRAWN, cleared on a return to ACTIVE.
+  ///
+  /// `updatedAt` cannot stand in for this: any later edit would reset it, so a
+  /// record touched once a year would never become due for minimisation and
+  /// the surplus data would be kept forever by accident.
+  departedAt    DateTime?
   classArmId    String?       @db.Uuid
   bloodGroup    String?
   genotype      String?
@@ -453,8 +483,29 @@ model Student {
   nationality   String        @default("Nigerian")
   religion      String?
   notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+
+  /// When a parent's consent to the sensitive fields was recorded, and how.
+  ///
+  /// Sections 30(1)(a) and 31(1) make consent the lawful basis for genotype,
+  /// blood group, religion, state of origin and LGA — the education exemption
+  /// in section 31(4)(b) covers the rest of the record but not these. Section
+  /// 26(2) then puts the burden of *demonstrating* that consent on the
+  /// controller, so it has to be a row, not a policy sentence. Null here means
+  /// no consent is on record, and the service refuses to write a sensitive
+  /// field without one.
+  sensitiveConsentAt          DateTime?
+  /// The parent or guardian who gave it, as named on the form. Null on a bulk
+  /// migration, where the batch declares the consent and the paper forms
+  /// remain the record of who signed each one.
+  sensitiveConsentBy          String?        @db.VarChar(120)
+  sensitiveConsentMethod      ConsentMethod?
+  /// Set when consent is withdrawn, which also erases the five fields. Kept
+  /// rather than left blank so "a parent said no" is distinguishable from
+  /// "nobody has asked yet" — a bursar looking at an empty genotype needs to
+  /// know which. Cleared if consent is later given again.
+  sensitiveConsentWithdrawnAt DateTime?
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @updatedAt
 
   school         School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classArm       ClassArm?          @relation(fields: [classArmId], references: [id], onDelete: SetNull)
@@ -469,8 +520,14 @@ model Student {
 
   @@unique([schoolId, studentId])
   @@index([schoolId, status])
+  // Drives the retention sweep, which looks only at departed students.
+  @@index([departedAt])
   @@index([schoolId, classArmId])
   @@index([schoolId, lastName, firstName])
+  // Finds the students a school still has to collect consent for. Every
+  // migrated record starts in that state, so this is a working list, not a
+  // rare report.
+  @@index([schoolId, sensitiveConsentAt])
   @@map("students")
 }
 
@@ -1108,7 +1165,7 @@ model SchoolSettings {
 
   /// Which weekdays the school opens, as a 7-bit mask (bit 0 is Sunday).
   /// 62 is Monday-Friday. A register is refused on any day not set here.
-  schoolDaysMask       Int     @default(62)
+  schoolDaysMask Int @default(62)
 
   /// Some schools deliberately do not rank children.
   reportShowPosition   Boolean @default(true)
@@ -1175,15 +1232,15 @@ model FileObject {
 /// holds no membership anywhere, which is enforced when access is granted: the
 /// whole point is that the two blast radii do not overlap.
 model PlatformAdmin {
-  id     String       @id @default(uuid()) @db.Uuid
-  userId String       @unique @db.Uuid
-  role   PlatformRole @default(SUPPORT)
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @unique @db.Uuid
+  role        PlatformRole @default(SUPPORT)
   /// Revoking access without deleting the trail of what they did.
-  disabledAt DateTime?
+  disabledAt  DateTime?
   /// The platform admin who granted this one; null for the bootstrapped first.
-  grantedById String?  @db.Uuid
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  grantedById String?      @db.Uuid
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1202,4 +1259,92 @@ model WebhookEvent {
   @@unique([provider, externalId])
   @@index([reference])
   @@map("webhook_events")
+}
+
+/// Where an incident sits in its lifecycle. Deliberately coarse: the detail
+/// lives in the narrative fields, and a long enum invites mis-filing.
+enum BreachStatus {
+  /// Being investigated. Scope and risk may still change.
+  OPEN
+  /// Stopped and no longer live, but follow-up actions remain.
+  CONTAINED
+  /// Investigated, notified where required, and finished.
+  CLOSED
+}
+
+/// The register of personal data breaches that section 40(8) of the Nigeria
+/// Data Protection Act 2023 requires a controller *and* a processor to keep —
+/// "a record of all personal data breaches, comprising the facts relating to
+/// the personal data breach, its effects and the remedial action taken in a
+/// manner that enables the Commission to verify compliance".
+///
+/// The fields follow Article 33(5) of the GAID 2025, which prescribes what a
+/// notification must contain. Keeping the register in that shape means a
+/// notification is a read of this row rather than a scramble to reconstruct
+/// it — which matters when the clock is 72 hours.
+///
+/// **Global, not tenant-scoped.** One incident can span several schools or
+/// none, and it is recorded by A4 rather than by a school. `affectedSchoolIds`
+/// records the blast radius instead.
+model BreachRecord {
+  id        String @id @default(uuid()) @db.Uuid
+  /// Human reference used in correspondence with the Commission.
+  reference String @unique
+
+  /// When WE became aware. This — not when it happened — starts the 72-hour
+  /// clock in s.40(2), and it is why it is separate from `occurredFrom`.
+  discoveredAt DateTime
+  /// Art 33(5)(b): the period over which the breach occurred, where known.
+  occurredFrom DateTime?
+  occurredTo   DateTime?
+
+  /// Art 33(5)(a): the circumstances of the loss, unauthorised access or
+  /// disclosure.
+  description       String
+  /// Art 33(5)(c): which categories of personal data were involved.
+  dataCategories    String[]
+  /// Art 33(5)(d): assessment of the risk of harm to individuals.
+  riskAssessment    String
+  /// Drives whether data subjects must be told. GAID Art 33(3) requires that
+  /// to happen *immediately* where the risk is high, which is stricter than
+  /// the Act's "without undue delay".
+  highRisk          Boolean  @default(false)
+  /// Art 33(5)(e): how many individuals face a real risk of significant harm.
+  affectedSubjects  Int?
+  /// Which tenants are affected. Empty means platform-wide or not yet known.
+  affectedSchoolIds String[] @db.Uuid
+
+  /// Art 33(5)(f): steps taken to reduce the risk of harm.
+  containment         String?
+  /// Art 33(5)(g): steps taken to notify the individuals concerned.
+  subjectNotification String?
+  subjectsNotifiedAt  DateTime?
+
+  /// Null until the Commission has been told. The gap between this and
+  /// `discoveredAt` is the only number that matters when compliance with
+  /// s.40(2) is questioned.
+  commissionNotifiedAt          DateTime?
+  /// Recorded when a reasoned decision is taken that s.40(2) notification is
+  /// not required. A blank `commissionNotifiedAt` then means "considered and
+  /// not required" rather than "forgotten" — a distinction nobody can
+  /// reconstruct a year later.
+  notificationNotRequiredReason String?
+
+  /// Art 33(5)(h): who can answer the Commission's questions.
+  contactName  String
+  contactEmail String
+
+  status BreachStatus @default(OPEN)
+
+  /// The platform admin who filed it. Kept as a plain id, like
+  /// `PlatformAdmin.grantedById`, so revoking an operator never cascades a
+  /// breach record out of existence.
+  recordedByAdminId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, discoveredAt])
+  @@index([discoveredAt])
+  @@map("breach_records")
 }

@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { FilePurpose, Prisma, StudentStatus } from '@prisma/client';
+import {
+  ConsentMethod,
+  FilePurpose,
+  Prisma,
+  StudentStatus,
+} from '@prisma/client';
 import { ClassArmsService } from '../academics/class-arms.service';
 import { FilesService } from '../files/files.service';
 import { SchoolSettingsService } from '../tenants/school-settings.service';
@@ -15,6 +20,16 @@ import {
   nextSequence,
 } from './admission-number';
 import {
+  blankSensitiveToNull,
+  clearSensitiveFields,
+  consentColumns,
+  hasSensitiveConsent,
+  populatedSensitiveFields,
+  SENSITIVE_STUDENT_FIELDS,
+  sensitiveFieldsNeedingConsent,
+  withdrawSensitiveConsent,
+} from './sensitive-fields';
+import {
   BulkAdmitResultDto,
   BulkAdmitStudentsDto,
   PromoteStudentsDto,
@@ -25,6 +40,8 @@ import {
   AdmitStudentDto,
   ChangeStudentStatusDto,
   QueryStudentsDto,
+  SensitiveDataConsentDto,
+  SensitiveDataErasureDto,
   StudentDto,
   StudentProfileDto,
   UpdateStudentDto,
@@ -55,6 +72,20 @@ const WITH_GUARDIANS = {
 type StudentRow = Prisma.StudentGetPayload<{ include: typeof WITH_ARM }>;
 type ProfileRow = Prisma.StudentGetPayload<{ include: typeof WITH_GUARDIANS }>;
 
+/**
+ * The consent columns, as a shape assignable to both a create and an update.
+ *
+ * Prisma's own update input is not: it allows `{ set: … }` operation objects
+ * for every field, which makes the result unusable on the create path. Naming
+ * the four columns here keeps one helper serving both writes.
+ */
+type ConsentColumns = {
+  sensitiveConsentAt?: Date | null;
+  sensitiveConsentBy?: string | null;
+  sensitiveConsentMethod?: ConsentMethod | null;
+  sensitiveConsentWithdrawnAt?: Date | null;
+};
+
 /** Retries cover the window between reading the last number and writing it. */
 const ADMISSION_NUMBER_ATTEMPTS = 5;
 
@@ -75,6 +106,15 @@ export class StudentsService {
       await this.assertAdmissionNumberFree(dto.studentId);
     }
 
+    // On admission there is nothing on record yet, so the consent has to be in
+    // this payload or the sensitive fields are refused.
+    const sensitive = blankSensitiveToNull(dto);
+    const consent = this.resolveConsent(
+      sensitive,
+      dto.sensitiveDataConsent,
+      null,
+    );
+
     const data = {
       // Prisma's types require the tenant column on create. Supplying it is
       // safe: the guard rejects any value other than the active tenant.
@@ -90,13 +130,14 @@ export class StudentsService {
       photoUrl: dto.photoUrl ?? null,
       admissionDate: dto.admissionDate,
       classArmId: dto.classArmId ?? null,
-      bloodGroup: dto.bloodGroup ?? null,
-      genotype: dto.genotype ?? null,
-      stateOfOrigin: dto.stateOfOrigin ?? null,
-      lga: dto.lga ?? null,
+      bloodGroup: sensitive.bloodGroup ?? null,
+      genotype: sensitive.genotype ?? null,
+      stateOfOrigin: sensitive.stateOfOrigin ?? null,
+      lga: sensitive.lga ?? null,
       nationality: dto.nationality ?? 'Nigerian',
-      religion: dto.religion ?? null,
+      religion: sensitive.religion ?? null,
       notes: dto.notes ?? null,
+      ...consent,
     };
 
     if (dto.studentId) {
@@ -173,6 +214,15 @@ export class StudentsService {
       dto.admissionDate ?? existing.admissionDate,
     );
 
+    // Consent already on the row counts, so a school that collected it at
+    // admission is not asked again every time a genotype is corrected.
+    const sensitive = blankSensitiveToNull(dto);
+    const consent = this.resolveConsent(
+      sensitive,
+      dto.sensitiveDataConsent,
+      existing,
+    );
+
     // Only check room when the student is actually moving into a new arm —
     // and do it under the arm's lock so the move cannot overfill it.
     const moving =
@@ -197,13 +247,14 @@ export class StudentsService {
           photoUrl: dto.photoUrl,
           admissionDate: dto.admissionDate,
           classArmId: dto.classArmId,
-          bloodGroup: dto.bloodGroup,
-          genotype: dto.genotype,
-          stateOfOrigin: dto.stateOfOrigin,
-          lga: dto.lga,
+          bloodGroup: sensitive.bloodGroup,
+          genotype: sensitive.genotype,
+          stateOfOrigin: sensitive.stateOfOrigin,
+          lga: sensitive.lga,
           nationality: dto.nationality,
-          religion: dto.religion,
+          religion: sensitive.religion,
           notes: dto.notes,
+          ...consent,
         },
         include: WITH_ARM,
       });
@@ -235,7 +286,13 @@ export class StudentsService {
 
       return tx.student.update({
         where: { id },
-        data: { status: dto.status },
+        data: {
+          status: dto.status,
+          // Stamped here rather than inferred from `updatedAt`, which any
+          // later edit would reset — and a reset clock means the surplus
+          // data is never destroyed.
+          departedAt: dto.status === StudentStatus.ACTIVE ? null : new Date(),
+        },
         include: WITH_ARM,
       });
     });
@@ -289,6 +346,60 @@ export class StudentsService {
       include: WITH_ARM,
     });
     return this.toDto(updated);
+  }
+
+  /**
+   * Erases the student's sensitive personal data — genotype, blood group,
+   * religion, state of origin and LGA — and nothing else.
+   *
+   * **Unconditional, by design.** Every other field on the record is held under
+   * a basis the school cannot simply be asked to abandon: performance of the
+   * contract, or a legal obligation to keep the record. These five are held
+   * under *consent* (s.30(1)(a), given by a parent under s.31(1)), and s.35(2)
+   * requires withdrawal to be as easy as consent was to give. So there is no
+   * balancing test here and no competing basis to weigh — the request is
+   * honoured, immediately.
+   *
+   * Erasing all five together rather than one at a time is deliberate: they
+   * share a single lawful basis, so withdrawing consent withdraws it for the
+   * set. It also means a parent does not have to know the field names to
+   * exercise the right.
+   *
+   * Succeeds when there is nothing to erase. A request that reports "already
+   * clear" and one that reports "erased" are both the right answer to "stop
+   * holding this", and failing the second attempt would make the right
+   * awkward to exercise for no benefit.
+   */
+  async eraseSensitiveData(id: string): Promise<SensitiveDataErasureDto> {
+    const existing = await this.getOrThrow(id);
+    const erasedFields = populatedSensitiveFields(existing);
+    const consentWithdrawn = hasSensitiveConsent(existing);
+
+    // Nothing held and no consent on file: already in the state being asked
+    // for. Note the second half of that condition — a school can tick the box
+    // before entering any values, and withdrawing then has to drop the record
+    // even though there is no data to erase, or the school is left claiming a
+    // basis a parent has revoked.
+    if (erasedFields.length === 0 && !consentWithdrawn) {
+      return {
+        student: this.toDto(existing),
+        erasedFields: [],
+        consentWithdrawn: false,
+      };
+    }
+
+    const updated = await this.prisma.student.update({
+      where: { id },
+      // The values and the record of why they were lawful go together, in one
+      // write. Either alone leaves the row misdescribing itself.
+      data: {
+        ...clearSensitiveFields(),
+        ...withdrawSensitiveConsent(new Date()),
+      },
+      include: WITH_ARM,
+    });
+
+    return { student: this.toDto(updated), erasedFields, consentWithdrawn };
   }
 
   async remove(id: string): Promise<void> {
@@ -413,8 +524,15 @@ export class StudentsService {
           status: StudentStatus.ACTIVE,
         },
         data: graduating
-          ? // Graduates keep their record but leave the roll entirely.
-            { status: StudentStatus.GRADUATED, classArmId: null }
+          ? // Graduates keep their record but leave the roll entirely. The
+            // departure is stamped here too — graduating through promotion is
+            // the *common* way to leave, so missing it here would mean whole
+            // year groups never became due for minimisation.
+            {
+              status: StudentStatus.GRADUATED,
+              classArmId: null,
+              departedAt: new Date(),
+            }
           : { classArmId: target },
       });
     });
@@ -441,6 +559,21 @@ export class StudentsService {
       ...(query.gender ? { gender: query.gender } : {}),
       ...(query.unassigned === true ? { classArmId: null } : {}),
       ...(query.unassigned === false ? { classArmId: { not: null } } : {}),
+      // "Holds something sensitive, has no consent for it" — the gap a school
+      // migrating off paper has to close. Built from the field list so a new
+      // sensitive column joins the query without being remembered here.
+      //
+      // `{ not: null }` is exact because blanks are normalised to null on
+      // write (see blankSensitiveToNull): without that, a row holding `''`
+      // would appear on this list with nothing on it to fix.
+      ...(query.sensitiveConsentMissing === true
+        ? {
+            sensitiveConsentAt: null,
+            OR: SENSITIVE_STUDENT_FIELDS.map((field) => ({
+              [field]: { not: null },
+            })),
+          }
+        : {}),
       ...(search
         ? {
             OR: [
@@ -553,6 +686,61 @@ export class StudentsService {
     }
   }
 
+  /**
+   * Turns the consent block (or its absence) into the columns to write, and
+   * refuses the write when a sensitive field would be set without one.
+   *
+   * This is the single gate. Both the admission path and the update path go
+   * through it, because the alternative — checking in one and trusting the
+   * other — is how a field ends up writable by whichever route was forgotten.
+   *
+   * Three cases:
+   *
+   * 1. **Consent supplied.** Recorded, replacing anything there and clearing
+   *    any earlier withdrawal. A school re-sending it is correcting a name or
+   *    logging a re-signed form, and both should land.
+   * 2. **Not supplied, nothing sensitive being set.** No consent columns are
+   *    touched at all. An ordinary edit to a phone number must not disturb the
+   *    consent record, and must not be blocked by its absence.
+   * 3. **Not supplied, something sensitive being set, nothing on record.**
+   *    Refused, naming the fields — the frontend turns that into the tick-box.
+   */
+  private resolveConsent(
+    payload: Parameters<typeof sensitiveFieldsNeedingConsent>[0],
+    supplied: SensitiveDataConsentDto | undefined,
+    existing: { sensitiveConsentAt: Date | null } | null,
+  ): ConsentColumns {
+    if (supplied) {
+      const givenAt = supplied.givenAt ?? new Date();
+
+      // A consent dated in the future is either a typo or an attempt to make
+      // a record look collected before it was. Neither should be stored.
+      if (givenAt.getTime() > Date.now()) {
+        throw AppException.badRequest(
+          'sensitiveDataConsent.givenAt cannot be in the future',
+          ErrorCode.VALIDATION_ERROR,
+        );
+      }
+
+      return consentColumns(
+        { method: supplied.method, givenBy: supplied.givenBy, givenAt },
+        givenAt,
+      );
+    }
+
+    const needed = sensitiveFieldsNeedingConsent(payload, existing);
+    if (needed.length > 0) {
+      throw AppException.badRequest(
+        `Recording ${needed.join(', ')} needs the parent’s consent. Send ` +
+          'sensitiveDataConsent with this request, or leave these fields ' +
+          'blank — the rest of the record does not need it.',
+        ErrorCode.CONSENT_REQUIRED,
+      );
+    }
+
+    return {};
+  }
+
   private assertBornBeforeAdmission(
     dateOfBirth: Date | null,
     admissionDate: Date,
@@ -596,6 +784,14 @@ export class StudentsService {
       nationality: row.nationality,
       religion: row.religion,
       notes: row.notes,
+      sensitiveDataConsent: row.sensitiveConsentAt
+        ? {
+            givenAt: row.sensitiveConsentAt,
+            givenBy: row.sensitiveConsentBy,
+            method: row.sensitiveConsentMethod,
+          }
+        : null,
+      sensitiveDataConsentWithdrawnAt: row.sensitiveConsentWithdrawnAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
