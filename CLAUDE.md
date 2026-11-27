@@ -21,8 +21,11 @@ npm run start:dev             # http://localhost:3000/api  · docs at /api/docs
 
 npm test                      # unit tests
 npm run test:e2e              # integration tests
-npm run lint                  # eslint --fix is already in the script
+npm run lint                  # eslint --fix is already in the script; covers src, test and scripts
 npx tsc --noEmit              # typecheck (CI runs this separately from build)
+npm run typecheck:scripts     # scripts/ sits outside the root tsconfig; this is what compiles it
+
+npm run verify:deploy -- <url> production   # check a deployed environment from outside
 ```
 
 ### Two Jest configurations
@@ -133,6 +136,34 @@ Route metadata comes from [src/common/decorators/index.ts](src/common/decorators
 `PermissionsGuard` is also the last line of tenant defence — it rejects any authenticated request that
 reached a handler without a resolved tenant unless the route is `@AllowNoTenant()`.
 
+## Email verification — what it actually gates
+
+Registration hands back a working session before anybody has clicked anything, which is right: a
+school should be usable in its first minute. But `emailVerifiedAt` used to be written and reported
+and **checked nowhere** — `EMAIL_NOT_VERIFIED` sat in the error enum unthrown — so the control
+looked present in review while providing nothing.
+
+Two places now turn on it, chosen narrowly:
+
+- **A password reset is never sent to an unverified address.** This is the step that turned a typo
+  into a stolen school: `school@gmial` registers fine and mails the activation link to whoever owns
+  the typo, which tells them the account exists; a reset then handed them the only `PROPRIETOR`
+  login, deliberately the one role a school cannot take away. The response is **deliberately
+  unchanged** — answering differently would make the endpoint an oracle for which addresses are
+  registered but unverified, a worse leak than the one being closed. The refusal is audited.
+- **Parents cannot be invited to the portal from an unverified account**
+  ([portal-access.service.ts](src/portal/portal-access.service.ts)). That is where families begin
+  handing a school their children's data.
+
+**Staff invitations are deliberately still open**, as is everything else. A gate on
+`UsersService.createInvitation` was tried and reverted: it put a hard stop at the most common first
+action a school takes. If that decision is revisited, note it breaks ~40 fixtures, which is a fair
+measure of how central inviting staff is to setting a school up.
+
+`registerSchool` in [test/utils/test-app.ts](test/utils/test-app.ts) confirms the owner's address by
+default, because that is what a real school does next. Pass `verified: false` to test the rules that
+turn on it, and say so in the test name.
+
 ## Authorization
 
 Permission-based, never `if (role === 'X')`. Roles are bundles of permissions, and the six system roles
@@ -155,7 +186,18 @@ are **copied into each school** at provisioning so a school can retune its own r
 
 - Throw `AppException` with an `ErrorCode` ([src/common/errors/](src/common/errors/)); a single global
   filter renders the standard body (`errorCode`, `requestId`, `path`, …). Stack traces, SQL and Prisma
-  internals must never reach a client.
+  internals must never reach a client. **Nor a dependency's exception class name:** the filter
+  forwards whatever an `HttpException` carries, and `ThrottlerException` names itself in its own
+  message — so whoever hit the login rate limit was shown "ThrottlerException: Too Many Requests".
+  `presentableMessage` drops a message that opens with a class name in favour of ours, matching the
+  shape rather than naming the one library, and it covers both the object and bare-string forms of
+  `getResponse()` because that library uses the string one.
+- **`main.ts` loads `.env.local` then `.env` itself.** `ConfigModule` does it too, but not until
+  `AppModule` is constructed, and `validateEnv` runs at module load because Sentry has to be
+  initialised before the modules it instruments are imported. Without the explicit load,
+  `npm run start:dev` failed on a fully populated `.env` and told the developer to go and read
+  `.env.example`. CI and Railway both inject variables into the process environment, so neither ever
+  exercises file loading — a developer's first clone is the only path that does.
 - Never return Prisma models directly — map to a DTO. Global `ValidationPipe` runs with `whitelist` +
   `forbidNonWhitelisted`, so every input needs a DTO.
 - `AuditService.record()` never throws; a failed audit write must not roll back the business operation.
@@ -166,6 +208,15 @@ are **copied into each school** at provisioning so a school can retune its own r
   because a missing variable once published the whole API surface on the live service. The one sanctioned exception is
   [src/common/constants/throttle.ts](src/common/constants/throttle.ts), which reads `process.env`
   directly because `@Throttle()` decorators evaluate before DI exists.
+- **`EMAIL_FROM` must be on a domain verified with the provider**, and production refuses to boot
+  with a placeholder while `EMAIL_PROVIDER=resend`. A provider rejects an unverifiable sender per
+  message at send time, and nothing in the application surfaces that: a failed invitation
+  deliberately does not fail the request that triggered it, so a school sees "invited" and the
+  parent receives nothing. The two placeholders are easy to ship — `.env.example` carried
+  `example.com`, and this file's own default was `edugear.app`, differing from the real domain by
+  its TLD alone. It also now gates a feature: inviting parents to the portal requires the inviting
+  account's address to have been verified, and that verification arrives by email, so broken
+  sending presents as a permissions error nobody can explain.
 - **Redis is required in production** and optional everywhere else. `RedisService.client` is `null`
   when `REDIS_URL` is unset, and callers fall back to in-process state — correct for a single instance
   only, which is why [env.validation.ts](src/config/env.validation.ts) refuses to boot production
@@ -188,7 +239,23 @@ are **copied into each school** at provisioning so a school can retune its own r
   that do not exist — a prose comment claiming the restart policy is `ON_FAILUER` would survive
   review, that file would not. It proves the names are real, **not** that they match what Railway is
   running; change one in the dashboard, change it there too. The root tsconfig covers
-  `src`/`test`/`prisma` only, which is why it has a tsconfig of its own. `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
+  `src`/`test`/`prisma` only, which is why it has a tsconfig of its own — and why
+  [scripts/tsconfig.json](scripts/tsconfig.json) exists too: `scripts/` was compiled by nothing, in
+  files that grant platform access and destroy student data. `npm run typecheck:scripts` and
+  `npm run lint` now both cover it, and CI runs both.
+
+  **A dashboard showing the right values is not evidence the right values are in force** — that is
+  the failure this whole arrangement exists around. `npm run verify:deploy -- <url> <env>` asks the
+  running process instead: that `/api/health` has a live database *and* cache, that
+  `/api/health/live` reports a real commit rather than `unset` (the `APP_VERSION` trap), that
+  `APP_ENV` names the environment you think you are looking at, that Swagger is closed in
+  production, that an unauthenticated route still answers 401, and that CORS refuses an origin it
+  should not know. Read-only and unauthenticated; it touches neither the Railway API nor the CLI.
+  The per-environment variables are tabulated in
+  [docs/railway-service-settings.md](docs/railway-service-settings.md), including the three that
+  must differ between staging and production and the one that must be left blank.
+
+  `prisma.config.ts` disables Prisma's implicit `.env` loading and loads
   `.env.local` then `.env` explicitly.
 
 ## Status
@@ -199,7 +266,9 @@ delivered by earlier phases.
 
 Known gaps, deliberately left: one teacher per subject per arm, so co-teaching a subject is
 unsupported (confirmed as correct for the pilot schools); no virus scanning or EXIF stripping on
-uploads.
+uploads; no parent-portal control for consent to the sensitive student fields — it is given and
+withdrawn through the school, which is the controller, so `ConsentMethod.PORTAL` is reserved and
+currently unreachable.
 
 Feature modules follow the shape of [src/academics/](src/academics/), [src/students/](src/students/),
 [src/finance/](src/finance/) and [src/results/](src/results/): pure domain rules in their own file with a `*.spec.ts`, a service
@@ -443,6 +512,25 @@ send time.
 [row-lock.ts](src/database/row-lock.ts). Take it at the start of any transaction whose check guards
 its write — capacity, overpayment, a sheet's DRAFT status. `lockRows` sorts ids to avoid deadlock.
 
+`lockSchoolScope(tx, scope, schoolId)` is for a check that spans rows, where there is no single row
+to lock: a storage quota is a sum over every file, and **a generated identifier is a maximum over
+every row**. Admission and receipt numbers both take it.
+
+**Do not replace that lock with more retries.** It was retries: each writer read the same maximum,
+computed the same next value, and the unique index refused all but one — and since every retry
+recomputed the identical number, the retries collided too. Ten simultaneous admissions lost four;
+eight payment verifications lost two, leaving that money PENDING with the screen looking finished.
+Retry-on-conflict is the right shape when conflicts are rare and independent; here every writer
+contends for one value by construction. The retry loops remain as a backstop for a number that
+arrived some other way, not for ordinary concurrency. `concurrency.e2e-spec.ts` fails if the lock
+goes — and its receipt test deliberately uses **six different invoices**, because payments against
+one invoice are already serialised by that invoice's row lock and a single-invoice test passes with
+the serialisation removed.
+
+**Lock order is advisory-then-row, everywhere.** `createWithGeneratedNumber`, the importer and
+`PaymentsService.verify` all take the school scope before any row lock. Two paths taking the same
+two locks in opposite orders is the textbook deadlock.
+
 ### Granting permissions (Phase 5)
 
 **You cannot grant a permission you do not hold.** [roles.service.ts](src/tenants/roles.service.ts)
@@ -471,6 +559,47 @@ feature than a weekly pattern. Anything new that reads a setting should degrade 
 than require the row. Changing a prefix must never rewrite issued numbers: the parsers in
 [admission-number.ts](src/students/admission-number.ts) and
 [receipt-number.ts](src/finance/receipt-number.ts) ignore the prefix so a year's sequence continues.
+
+**The query feeding those parsers has to ignore the prefix too**, and for a long time the admission
+one did not. It searched for numbers *starting with* the year, which `GFA/2026/0001` does not — so
+a school that set a prefix before admitting anybody found the maximum came back empty, the next
+number was computed as `0001` again, and the unique index refused it on every retry. That school
+could admit exactly one student, ever, with no concurrency involved. Use
+`admissionNumbersIssuedIn(year)`, which matches both shapes; the receipt lookup already did this
+with `contains`. The existing settings test was one admission short of catching it, because its
+first number was unprefixed and therefore findable — so it now admits a third student, and there is
+a second test for a school that was prefixed from the start.
+
+### Sensitive student data — the one place consent is the basis
+
+Genotype, blood group, religion, state of origin and LGA are special-category data under NDP Act
+s.65. Section 31(4)(b) exempts education from parental consent for the *rest* of a student record,
+but **it does not reach s.30**: for these five the basis is consent, and s.26(2) puts the burden of
+demonstrating it on the school. So it is a row, not a policy sentence.
+
+[sensitive-fields.ts](src/students/sensitive-fields.ts) is the pure layer — the field list, and
+every rule about it. Rules that follow:
+
+- **No sensitive value is written without a consent record.** `StudentsService.resolveConsent` is
+  the single gate and both the admission and update paths go through it; the import has its own
+  (`checkSensitiveConsent`) because a spreadsheet declares consent per file rather than per row.
+  Anything new that writes one of these columns goes through one of the two, or it is a hole.
+- **Add a new s.65 column to `SENSITIVE_STUDENT_FIELDS` and nowhere else.** The gate, the erasure,
+  the "missing consent" query and the retention sweep all derive from that list.
+- **Clearing a field never needs consent.** Refusing to let a school delete sensitive data until it
+  produces a consent form would be exactly backwards.
+- **Erasure and withdrawal are one write.** `eraseSensitiveData` clears the five values *and* the
+  consent record together — either alone leaves the row misdescribing itself — and stamps
+  `sensitiveConsentWithdrawnAt`, because "a parent said no" and "nobody has asked yet" both leave
+  the fields empty and a bursar has to tell them apart. It succeeds when there is nothing to erase,
+  and it still acts when consent was recorded but no values were.
+- **Blank is normalised to null on write.** Otherwise `''` reads as held by SQL and as absent by
+  everything else, and the `sensitiveConsentMissing` list fills up with rows that have nothing on
+  them to fix.
+- **The signatory's name stays off the audit entry.** It is on the student row, where the retention
+  schedule destroys it with the data it authorised; an audit entry outlives that by years, so
+  copying the name there would reinstate what minimisation just removed. The entry proves the act
+  and its date — the row says who.
 
 ### Files
 

@@ -66,8 +66,27 @@ export async function lockRows(
  * a sum over every file, so there is no single row to lock. A transaction-level
  * advisory lock serialises the check-then-insert for one school without touching
  * the rows themselves.
+ *
+ * Generated identifiers are the same shape of problem. "The highest admission
+ * number this year" is a maximum over every student, so there is no row to lock
+ * either — and without a lock every concurrent writer reads the same maximum
+ * and computes the same next value. The unique index then refuses all but one,
+ * and because each retry recomputes the identical number, the retries collide
+ * too: a burst of ten admissions lost four, and eight payment verifications at
+ * once lost two, each answering "Could not allocate a receipt number".
+ *
+ * Retrying was the wrong tool. Retry-on-conflict works when conflicts are rare
+ * and independent; here every writer contends for one value by construction, so
+ * the retry budget is spent on the collision rather than on bad luck. The lock
+ * removes the contention instead of recovering from it, and because it is held
+ * for the transaction, a rollback hands the number back rather than leaving a
+ * gap in a receipt book somebody has to explain.
  */
-const ADVISORY_SCOPES = { storageQuota: 'edugear:storage-quota' } as const;
+const ADVISORY_SCOPES = {
+  storageQuota: 'edugear:storage-quota',
+  admissionNumber: 'edugear:admission-number',
+  receiptNumber: 'edugear:receipt-number',
+} as const;
 
 export type AdvisoryScope = keyof typeof ADVISORY_SCOPES;
 

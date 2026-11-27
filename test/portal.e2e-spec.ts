@@ -256,6 +256,73 @@ describe('Parent portal', () => {
   // -------------------------------------------------------------------------
 
   describe('access', () => {
+    // Inviting parents is the point at which families start handing a school
+    // their children's data, so it is the one place an unproved
+    // administrator address is made to matter. A school registered to
+    // `school@gmial` instead of `school@gmail` is reachable by nobody and its
+    // activation mail went to a stranger; it should not be collecting
+    // families before somebody has clicked the link.
+    it('refuses to invite a parent from an unverified account', async () => {
+      await ctx.db.user.update({
+        where: { id: school.userId },
+        data: { emailVerifiedAt: null },
+      });
+
+      const refused = await ctx
+        .http()
+        .post(`/api/guardians/${emeka}/portal-access`)
+        .set(head())
+        .expect(403);
+      expect(refused.body.errorCode).toBe('EMAIL_NOT_VERIFIED');
+
+      // Nothing half-happened: no membership, no invitation token.
+      const guardian = await ctx.db.guardian.findUniqueOrThrow({
+        where: { id: emeka },
+      });
+      expect(guardian.userId).toBeNull();
+
+      // And it works the moment the address is confirmed.
+      await ctx.db.user.update({
+        where: { id: school.userId },
+        data: { emailVerifiedAt: new Date() },
+      });
+      await ctx
+        .http()
+        .post(`/api/guardians/${emeka}/portal-access`)
+        .set(head())
+        .expect(201);
+    });
+
+    // Staff invitations are deliberately left open: a school should be able to
+    // set itself up in its first minute, and staff are not somebody else's
+    // children.
+    it('still lets an unverified account invite staff', async () => {
+      await ctx.db.user.update({
+        where: { id: school.userId },
+        data: { emailVerifiedAt: null },
+      });
+
+      const role = await ctx.db.role.findFirstOrThrow({
+        where: { schoolId: school.schoolId, slug: 'TEACHER' },
+      });
+      await ctx
+        .http()
+        .post('/api/users/invite')
+        .set(head())
+        .send({
+          email: `teacher-${Math.random().toString(36).slice(2, 8)}@example.test`,
+          firstName: 'Ngozi',
+          lastName: 'Ude',
+          roleId: role.id,
+        })
+        .expect(201);
+
+      await ctx.db.user.update({
+        where: { id: school.userId },
+        data: { emailVerifiedAt: new Date() },
+      });
+    });
+
     it('invites a parent, naming their children in the email', async () => {
       const response = await ctx
         .http()

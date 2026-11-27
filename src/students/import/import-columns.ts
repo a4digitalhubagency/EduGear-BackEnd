@@ -148,14 +148,14 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     label: 'State of Origin',
     aliases: ['state of origin', 'state', 'origin'],
     required: false,
-    description: '',
+    description: 'Needs parental consent — confirm it when importing.',
   },
   {
     key: 'lga',
     label: 'LGA',
     aliases: ['lga', 'local government', 'local government area'],
     required: false,
-    description: '',
+    description: 'Needs parental consent — confirm it when importing.',
   },
   {
     key: 'nationality',
@@ -169,21 +169,21 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     label: 'Religion',
     aliases: ['religion'],
     required: false,
-    description: '',
+    description: 'Needs parental consent — confirm it when importing.',
   },
   {
     key: 'bloodGroup',
     label: 'Blood Group',
     aliases: ['blood group', 'bloodgroup', 'blood type'],
     required: false,
-    description: '',
+    description: 'Needs parental consent — confirm it when importing.',
   },
   {
     key: 'genotype',
     label: 'Genotype',
     aliases: ['genotype'],
     required: false,
-    description: '',
+    description: 'Needs parental consent — confirm it when importing.',
   },
   {
     key: 'notes',
@@ -330,7 +330,12 @@ export function buildTemplateCsv(): string {
     dateOfBirth: '14/03/2013',
     admissionDate: '15/09/2025',
     classArm: 'JSS1 A',
-    stateOfOrigin: 'Anambra',
+    // The five special-category columns are deliberately left blank in the
+    // example rows. They are offered — Nigerian admission forms collect them
+    // — but a filled-in sample invites a registrar to copy the pattern, and
+    // the pattern needs a parent's consent behind it. Blank keeps the column
+    // available without suggesting it be used unthinkingly, and it means the
+    // template still round-trips through the importer untouched.
     guardianName: 'Mr Emeka Okafor',
     guardianPhone: '08031234567',
     guardianEmail: 'emeka.okafor@example.com',

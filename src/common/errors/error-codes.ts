@@ -18,6 +18,13 @@ export enum ErrorCode {
   TENANT_ACCESS_DENIED = 'TENANT_ACCESS_DENIED',
   SCHOOL_INACTIVE = 'SCHOOL_INACTIVE',
 
+  /**
+   * A sensitive field was written with no parental consent on record. Its own
+   * code because the frontend has a specific remedy for it — collect the
+   * consent — rather than the generic "fix your input".
+   */
+  CONSENT_REQUIRED = 'CONSENT_REQUIRED',
+
   NOT_FOUND = 'NOT_FOUND',
   CONFLICT = 'CONFLICT',
   DUPLICATE_RESOURCE = 'DUPLICATE_RESOURCE',

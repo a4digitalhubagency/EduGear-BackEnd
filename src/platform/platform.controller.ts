@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   Query,
@@ -26,6 +27,7 @@ import { AUTH_THROTTLE, STRICT_THROTTLE } from '../common/constants/throttle';
 import {
   AllowNoTenant,
   Public,
+  CurrentPlatformAdmin,
   RequirePlatformRole,
 } from '../common/decorators';
 import { PaginatedDto } from '../common/dto/pagination.dto';
@@ -53,6 +55,20 @@ import {
   PlatformSessionDto,
 } from './platform-auth.service';
 import { PlatformSchoolsService } from './platform-schools.service';
+import { BreachService } from './breach.service';
+import { RetentionService } from '../retention/retention.service';
+import {
+  PurgeSchoolDto,
+  RetentionRunDto,
+  RunRetentionDto,
+  SchoolPurgeDto,
+} from '../retention/dto/retention.dto';
+import {
+  BreachDto,
+  QueryBreachesDto,
+  RecordBreachDto,
+  UpdateBreachDto,
+} from './dto/breach.dto';
 
 const ALL_ROLES = [
   PlatformRole.SUPPORT,
@@ -74,6 +90,8 @@ export class PlatformController {
     private readonly auth: PlatformAuthService,
     private readonly schools: PlatformSchoolsService,
     private readonly admins: PlatformAdminService,
+    private readonly breaches: BreachService,
+    private readonly retention: RetentionService,
   ) {}
 
   private meta(req: Request): SessionMeta {
@@ -342,5 +360,127 @@ export class PlatformController {
   @HttpCode(HttpStatus.NO_CONTENT)
   revoke(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.admins.revoke(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Breach register — NDP Act s.40(8)
+  // -------------------------------------------------------------------------
+
+  @Post('breaches')
+  @RequirePlatformRole(PlatformRole.OPERATOR, PlatformRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Record a personal data breach',
+    description:
+      'Opens an entry in the register s.40(8) requires. The 72-hour clock in ' +
+      's.40(2) runs from `discoveredAt` — when WE became aware — not from ' +
+      'when the breach began. Only what GAID Art 33(5) demands up front is ' +
+      'required; the rest arrives by PATCH, which is what s.40(9) means by ' +
+      'providing information in phases.',
+  })
+  @ApiCreatedResponse({ type: BreachDto })
+  recordBreach(
+    @Body() dto: RecordBreachDto,
+    @CurrentPlatformAdmin('platformAdminId') adminId: string,
+  ): Promise<BreachDto> {
+    return this.breaches.record(dto, adminId);
+  }
+
+  @Get('breaches')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'The breach register',
+    description:
+      'Most recently discovered first. `needsAttention=true` narrows it to ' +
+      'the ones whose notification decision cannot wait.',
+  })
+  listBreaches(
+    @Query() query: QueryBreachesDto,
+  ): Promise<PaginatedDto<BreachDto>> {
+    return this.breaches.list(query);
+  }
+
+  @Get('breaches/:id')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'One register entry' })
+  @ApiOkResponse({ type: BreachDto })
+  getBreach(@Param('id', ParseUUIDPipe) id: string): Promise<BreachDto> {
+    return this.breaches.get(id);
+  }
+
+  @Patch('breaches/:id')
+  @RequirePlatformRole(PlatformRole.OPERATOR, PlatformRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Amend a register entry',
+    description:
+      'There is deliberately no delete. A register that can be emptied is ' +
+      'not evidence, and s.40(8) asks for a record that lets the Commission ' +
+      'verify compliance — which means the awkward entries survive too.',
+  })
+  @ApiOkResponse({ type: BreachDto })
+  updateBreach(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateBreachDto,
+  ): Promise<BreachDto> {
+    return this.breaches.update(id, dto);
+  }
+
+  // -------------------------------------------------------------------------
+  // Retention — docs/legal/retention-schedule.md
+  // -------------------------------------------------------------------------
+
+  @Post('retention/preview')
+  @RequirePlatformRole(...ALL_ROLES)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'What a retention run would destroy',
+    description:
+      'Changes nothing. Preview and run share one task list, so what this ' +
+      'reports is what a run does. Read it before running anything — these ' +
+      'jobs destroy data about children.',
+  })
+  @ApiOkResponse({ type: RetentionRunDto })
+  previewRetention(@Body() dto: RunRetentionDto): Promise<RetentionRunDto> {
+    return this.retention.preview(dto.task);
+  }
+
+  @Post('retention/run')
+  @RequirePlatformRole(PlatformRole.OWNER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Apply the retention schedule',
+    description:
+      'Destructive and not reversible. OWNER only — a SUPPORT or OPERATOR ' +
+      'account can preview as much as it likes, but destroying records ' +
+      'across every tenant is not an operational action.',
+  })
+  @ApiOkResponse({ type: RetentionRunDto })
+  runRetention(@Body() dto: RunRetentionDto): Promise<RetentionRunDto> {
+    return this.retention.run(dto.task);
+  }
+
+  @Post('schools/:id/purge')
+  @RequirePlatformRole(PlatformRole.OWNER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Destroy every record belonging to one school',
+    description:
+      'For a school that has left and whose 90-day export window has closed ' +
+      '(Terms clause 11). Requires the school’s exact name typed back, ' +
+      'because an id is pasted and the row above the one you meant is one ' +
+      'click away. Defaults to a preview: pass execute=true to do it.',
+  })
+  @ApiOkResponse({ type: SchoolPurgeDto })
+  purgeSchool(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PurgeSchoolDto,
+  ): Promise<SchoolPurgeDto> {
+    return this.retention.purgeSchool(id, dto);
   }
 }

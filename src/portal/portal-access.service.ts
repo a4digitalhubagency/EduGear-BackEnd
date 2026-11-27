@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { MembershipStatus } from '@prisma/client';
 import { AccessControlService } from '../auth/access-control.service';
 import { SYSTEM_ROLES } from '../common/constants/roles';
-import { AuthContext } from '../common/context/request-context';
+import { AuthContext, RequestContext } from '../common/context/request-context';
+import { ErrorCode } from '../common/errors/error-codes';
 import { AppException } from '../common/errors/app.exception';
 import { InjectPrisma } from '../database/prisma.tokens';
 import { TenantAwarePrisma } from '../database/prisma.service';
@@ -56,6 +57,44 @@ export class PortalAccessService {
     };
   }
 
+  /**
+   * Refuses to invite a parent from an account whose own email was never
+   * verified.
+   *
+   * Registration deliberately hands back a working session before anyone has
+   * clicked anything — a school should be usable in its first minute, and
+   * staff invitations are left alone for the same reason. Inviting *parents*
+   * is where the calculation changes: it is the point at which families start
+   * handing over children's data to a school whose only administrator may be
+   * unreachable, because the address on the account was mistyped and the
+   * activation mail went to a stranger.
+   *
+   * So this is the narrow place verification is made to matter. A school can
+   * register, set up its classes, admit students and staff itself unverified;
+   * what waits is pulling parents in. The person who can clear it is already
+   * in the product, and the remedy is one click in their inbox.
+   *
+   * The password-reset path is the other half of this: an unverified address
+   * gets no reset link, which is what stops a mistyped registration from
+   * becoming someone else's school.
+   */
+  private async assertInviterVerified(auth: AuthContext): Promise<void> {
+    const inviter = await RequestContext.runAsSystem(() =>
+      this.prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: { emailVerifiedAt: true },
+      }),
+    );
+
+    if (!inviter?.emailVerifiedAt) {
+      throw AppException.forbidden(
+        'Confirm your own email address before inviting parents to the ' +
+          'portal. Check your inbox for the link, or request a new one.',
+        ErrorCode.EMAIL_NOT_VERIFIED,
+      );
+    }
+  }
+
   /** Invites — or re-sends the invitation to — a parent. */
   async invite(
     guardianId: string,
@@ -69,6 +108,7 @@ export class PortalAccessService {
       );
     }
     await this.settings.assertPortalEnabled();
+    await this.assertInviterVerified(auth);
     if (guardian.students.length === 0) {
       throw AppException.conflict(
         'This parent is not linked to any student, so the portal would show nothing',

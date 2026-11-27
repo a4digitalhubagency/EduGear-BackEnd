@@ -284,6 +284,13 @@ describe('Authentication', () => {
   });
 
   describe('Password reset', () => {
+    /** Registration leaves the address unproven; a reset needs it proven. */
+    const markVerified = (userId: string) =>
+      ctx.db.user.update({
+        where: { id: userId },
+        data: { emailVerifiedAt: new Date() },
+      });
+
     it('answers identically for known and unknown emails', async () => {
       const school = await registerSchool(ctx);
 
@@ -306,6 +313,98 @@ describe('Authentication', () => {
       expect(tokens).toHaveLength(1);
       // Only the hash is stored.
       expect(tokens[0].tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    // The step that turns a typo into a stolen school. `school@gmial` instead
+    // of `school@gmail` registers fine and mails the activation link to
+    // whoever owns the typo — which tells them the account exists. A reset
+    // would then hand them the only PROPRIETOR login, the one role a school
+    // cannot take away.
+    it('sends no reset link to an address that was never verified', async () => {
+      const school = await registerSchool(ctx, { verified: false });
+
+      await ctx
+        .http()
+        .post('/api/auth/forgot-password')
+        .send({ email: school.email })
+        .expect(202);
+
+      expect(
+        await ctx.db.verificationToken.count({
+          where: { userId: school.userId, type: 'PASSWORD_RESET' },
+        }),
+      ).toBe(0);
+    });
+
+    // Answering differently would turn this endpoint into an oracle for which
+    // addresses are registered but unverified — a worse leak than the one
+    // being closed.
+    it('is indistinguishable from the verified and unknown cases', async () => {
+      const unverified = await registerSchool(ctx, { verified: false });
+      const verified = await registerSchool(ctx);
+
+      const [a, b, c] = await Promise.all([
+        ctx
+          .http()
+          .post('/api/auth/forgot-password')
+          .send({ email: unverified.email }),
+        ctx
+          .http()
+          .post('/api/auth/forgot-password')
+          .send({ email: verified.email }),
+        ctx
+          .http()
+          .post('/api/auth/forgot-password')
+          .send({ email: 'ghost@example.com' }),
+      ]);
+
+      expect(a.status).toBe(b.status);
+      expect(b.status).toBe(c.status);
+      expect(a.body.message).toBe(b.body.message);
+      expect(b.body.message).toBe(c.body.message);
+    });
+
+    it('records the refusal, so a school can see it was attempted', async () => {
+      const school = await registerSchool(ctx, { verified: false });
+
+      await ctx
+        .http()
+        .post('/api/auth/forgot-password')
+        .send({ email: school.email })
+        .expect(202);
+
+      expect(
+        await ctx.db.auditLog.count({
+          where: {
+            action: 'auth.password.reset_refused_unverified',
+            entityId: school.userId,
+          },
+        }),
+      ).toBe(1);
+    });
+
+    // The legitimate owner of an unverified address is not stranded: prove
+    // the address, then reset.
+    it('lets a reset through once the address is verified', async () => {
+      const school = await registerSchool(ctx, { verified: false });
+
+      await ctx
+        .http()
+        .post('/api/auth/forgot-password')
+        .send({ email: school.email })
+        .expect(202);
+      await markVerified(school.userId);
+      await ctx
+        .http()
+        .post('/api/auth/forgot-password')
+        .send({ email: school.email })
+        .expect(202);
+
+      expect(
+        await ctx.db.verificationToken.count({
+          where: { userId: school.userId, type: 'PASSWORD_RESET' },
+        }),
+      ).toBe(1);
     });
 
     it('rejects an unknown reset token', async () => {

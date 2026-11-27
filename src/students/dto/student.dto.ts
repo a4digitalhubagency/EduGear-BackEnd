@@ -1,5 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Gender, GuardianRelationship, StudentStatus } from '@prisma/client';
+import {
+  ConsentMethod,
+  Gender,
+  GuardianRelationship,
+  StudentStatus,
+} from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -14,12 +19,55 @@ import {
   MaxLength,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 import { NG_PHONE_REGEX } from '../../tenants/dto/school.dto';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
+
+/**
+ * A parent's consent to the sensitive fields, as the school recorded it.
+ *
+ * Sent alongside the fields themselves rather than through a separate call, so
+ * the tick-box and the values it authorises arrive in one request and cannot
+ * half-succeed. A payload that sets genotype without this block is refused.
+ */
+export class SensitiveDataConsentDto {
+  @ApiProperty({
+    example: 'Mrs Chinwe Obi',
+    description:
+      'The parent or guardian who gave consent, as named on the form. ' +
+      'Recorded because section 26(2) puts the burden of demonstrating ' +
+      'consent on the school, and a date with no name behind it does not ' +
+      'discharge it.',
+  })
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  givenBy: string;
+
+  @ApiProperty({
+    enum: ConsentMethod,
+    description: 'How it was obtained. Every value names a documented act.',
+  })
+  @IsEnum(ConsentMethod)
+  method: ConsentMethod;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    description:
+      'When the parent gave it — the date on the admission form, which may ' +
+      'predate the record being entered. Defaults to now. Never in the future.',
+  })
+  @Type(() => Date)
+  @IsDate()
+  @IsOptional()
+  givenAt?: Date;
+}
 
 /** Fields a student shares between admission and update. */
 class StudentProfileFields {
@@ -143,6 +191,20 @@ class StudentProfileFields {
   @MaxLength(2000)
   @IsOptional()
   notes?: string | null;
+
+  @ApiPropertyOptional({
+    type: () => SensitiveDataConsentDto,
+    description:
+      'Required when this request sets genotype, blood group, religion, ' +
+      'state of origin or LGA and no consent is already on record. Omit it ' +
+      'when those fields are untouched, or when consent was recorded ' +
+      'earlier. Sending it again replaces the record — which is how a ' +
+      'school corrects a mistyped name or a re-signed form.',
+  })
+  @ValidateNested()
+  @Type(() => SensitiveDataConsentDto)
+  @IsOptional()
+  sensitiveDataConsent?: SensitiveDataConsentDto;
 }
 
 export class AdmitStudentDto extends StudentProfileFields {
@@ -258,6 +320,19 @@ export class QueryStudentsDto extends PaginationQueryDto {
   @IsOptional()
   unassigned?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'Students who hold at least one sensitive field with no parental ' +
+      'consent on record. Every record migrated from paper starts in that ' +
+      'state, so this is the school’s working list for collecting it.',
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    value === 'true' ? true : value === 'false' ? false : value,
+  )
+  @IsBoolean()
+  @IsOptional()
+  sensitiveConsentMissing?: boolean;
+
   @ApiPropertyOptional({ enum: SORTABLE, default: 'lastName' })
   @IsIn(SORTABLE)
   @IsOptional()
@@ -273,6 +348,26 @@ export class StudentGuardianSummaryDto {
   relationship: GuardianRelationship;
   @ApiProperty() isPrimary: boolean;
   @ApiProperty() canPickUp: boolean;
+}
+
+/**
+ * The consent behind the sensitive fields, as held.
+ *
+ * Read by the frontend to decide whether the tick-box shows as already given,
+ * refused, or never asked — three states a single boolean could not carry.
+ */
+export class SensitiveDataConsentRecordDto {
+  @ApiProperty({ type: String, format: 'date-time' })
+  givenAt: Date;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Null on a record migrated under a batch declaration',
+  })
+  givenBy: string | null;
+
+  @ApiPropertyOptional({ enum: ConsentMethod, nullable: true })
+  method: ConsentMethod | null;
 }
 
 export class StudentDto {
@@ -302,11 +397,60 @@ export class StudentDto {
   @ApiProperty() nationality: string;
   @ApiPropertyOptional({ nullable: true }) religion: string | null;
   @ApiPropertyOptional({ nullable: true }) notes: string | null;
+
+  @ApiPropertyOptional({
+    type: () => SensitiveDataConsentRecordDto,
+    nullable: true,
+    description:
+      'The parental consent behind the sensitive fields above. Null when ' +
+      'none is on record — in which case those fields cannot be written.',
+  })
+  sensitiveDataConsent: SensitiveDataConsentRecordDto | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description:
+      'Set when a parent withdrew consent. Distinguishes “they said no” ' +
+      'from “nobody has asked yet”, which both leave the fields empty.',
+  })
+  sensitiveDataConsentWithdrawnAt: Date | null;
+
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;
 }
 
 /** The full profile — everything in StudentDto plus the guardians. */
+/**
+ * The outcome of erasing a student's sensitive personal data.
+ *
+ * Names the fields that were cleared, never the values they held — writing the
+ * values into an audit entry that outlives the record would defeat the erasure.
+ */
+export class SensitiveDataErasureDto {
+  @ApiProperty({ type: () => StudentDto })
+  student: StudentDto;
+
+  @ApiProperty({
+    isArray: true,
+    type: String,
+    example: ['genotype', 'religion'],
+    description:
+      'Fields that held a value and were erased. Empty when there was ' +
+      'nothing to erase — the request still succeeds.',
+  })
+  erasedFields: string[];
+
+  @ApiProperty({
+    description:
+      'True when a consent record was on file and has been withdrawn. ' +
+      'Erasing the values without dropping the record would leave the ' +
+      'school claiming a basis for data it no longer holds.',
+  })
+  consentWithdrawn: boolean;
+}
+
 export class StudentProfileDto extends StudentDto {
   @ApiProperty({ type: [StudentGuardianSummaryDto] })
   guardians: StudentGuardianSummaryDto[];

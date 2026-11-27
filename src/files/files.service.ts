@@ -240,10 +240,15 @@ export class FilesService {
     return uploaded;
   }
 
-  /** Detaches and deletes whatever is linked, e.g. clearing a photo. */
+  /**
+   * Detaches and deletes whatever is linked, e.g. clearing a photo.
+   *
+   * `Payment` is in the union because `attachToPayment` writes it — leaving it
+   * out meant payment evidence was the one linked file nothing could clean up.
+   */
   async removeLinked(
     purpose: FilePurpose,
-    link: { type: 'Student' | 'School'; id: string },
+    link: { type: 'Student' | 'School' | 'Payment'; id: string },
   ): Promise<number> {
     const files = await this.prisma.fileObject.findMany({
       where: { purpose, linkedType: link.type, linkedId: link.id },
@@ -291,6 +296,24 @@ export class FilesService {
   idFromUrl(url: string | null | undefined): string | null {
     const match = /^\/api\/files\/([0-9a-f-]{36})$/i.exec(url ?? '');
     return match ? match[1] : null;
+  }
+
+  /**
+   * Deletes every file belonging to a school, for the purge in the retention
+   * schedule (§8) and clause 11 of the Terms.
+   *
+   * Public because the retention service needs it and `forget` is not its to
+   * call: the ordering rule — row first, then bytes — belongs here with the
+   * rest of the storage logic, not copied into a caller.
+   */
+  async purgeSchoolFiles(schoolId: string): Promise<number> {
+    const files = await RequestContext.runAsSystem(() =>
+      this.prisma.fileObject.findMany({ where: { schoolId } }),
+    );
+    for (const file of files) {
+      await this.forget(file);
+    }
+    return files.length;
   }
 
   // ---------------------------------------------------------------------------

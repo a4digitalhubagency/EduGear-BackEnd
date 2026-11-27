@@ -79,6 +79,12 @@ jobs:
       - name: Typecheck Railway config
         run: npm run typecheck:railway
 
+      # Same gap, higher stakes: the root tsconfig does not cover scripts/, so
+      # the three operational scripts — one of which grants platform access and
+      # one of which destroys student data — compiled nowhere. CI now does.
+      - name: Typecheck operational scripts
+        run: npm run typecheck:scripts
+
       - name: Unit tests
         run: npm test
 
