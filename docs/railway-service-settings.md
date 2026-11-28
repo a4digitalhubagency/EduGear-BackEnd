@@ -34,7 +34,7 @@ them; 4 proves it; 5 cleans up.
 
 ## Step 1 — the Settings tab
 
-Nine values. They are the same in both environments.
+Ten values. They are the same in both environments.
 
 | Section | Setting | Value |
 | --- | --- | --- |
@@ -42,6 +42,7 @@ Nine values. They are the same in both environments.
 | Build | Dockerfile Path | `Dockerfile` |
 | Deploy | Start Command | `node dist/main` |
 | Deploy | Pre-Deploy Command | `npx prisma migrate deploy` |
+| Deploy | Pre-Deploy Timeout | `600` |
 | Deploy | Healthcheck Path | `/api/health` |
 | Deploy | Healthcheck Timeout | `60` |
 | Deploy | Restart Policy | `On Failure` |
@@ -55,6 +56,15 @@ runs between build and deploy, and a failure stops the deployment — which is t
 point: a deploy whose migrations did not apply must not go live. If it is
 missing, migrations silently never run and the application starts against a
 schema that no longer matches it.
+
+**Pre-Deploy Timeout** is set long on purpose. Prisma wraps each migration in a
+transaction, so a timeout rolls the SQL back cleanly — but it leaves that
+migration marked *failed* in `_prisma_migrations`, and every later deploy then
+refuses to start until somebody runs `prisma migrate resolve` by hand against
+production. Ten minutes of waiting for a hung migration is a delayed deploy;
+cutting one short is an outage that needs manual database surgery. The headroom
+is not for today's migrations, which finish in seconds, but for an index added
+to `students` or `payments` once a school has a hundred thousand rows.
 
 **Healthcheck Path** is what stops a deploy the app cannot serve from being
 reported as successful.

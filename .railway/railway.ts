@@ -50,6 +50,18 @@ export default defineRailway(() => {
       // build and deploy, and a failure stops the deployment — which is what
       // we want: a deploy whose migrations did not apply must not go live.
       preDeployCommand: ['npx prisma migrate deploy'],
+      // Ten minutes, which is far longer than any migration here has needed —
+      // the current ones are additive and finish in seconds. The asymmetry is
+      // the reason: Prisma wraps each migration in a transaction, so a kill
+      // rolls the SQL back cleanly, but it leaves that migration marked
+      // *failed* in `_prisma_migrations`, and every later deploy then refuses
+      // to start until somebody runs `prisma migrate resolve` by hand against
+      // production. Waiting ten minutes for a hung migration costs a delayed
+      // deploy; cutting one short costs an outage that needs manual database
+      // surgery. The case this headroom is really for is not today's
+      // migrations but an index added to `students` or `payments` once a
+      // school has a hundred thousand rows.
+      preDeployTimeoutSeconds: 600,
       healthcheckPath: '/api/health',
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE',
