@@ -1,20 +1,19 @@
 # Railway service settings
 
-Railway stops reading `railway.json` on **1 December 2026**. These settings have
-to live in the Railway dashboard instead, entered by hand on the backend
-service, **in both the `production` and `staging` environments**.
+Railway stops reading `railway.json` on **1 December 2026**. The file has been
+deleted ahead of that date, now that both environments carry these settings in
+the dashboard — entered by hand on the backend service, and **separately for
+`production` and `staging`**.
 
 `.railway/railway.ts` is the typechecked record of the same values. The
 dashboard is what actually runs; that file is what stops the record rotting.
 
-**Doing this now is safe.** The values below are identical to what
-`railway.json` already contains, and while that file is still read it wins — so
-entering them changes nothing today, and on the day it stops being read they
-become the live configuration with no window in which the pre-deploy migration
-step or the healthcheck goes missing.
-
-Set them, verify, **then** delete `railway.json`. Not the other way round:
-deleting the file first drops the settings on the next deploy.
+This is now the only place these values exist. Both environments were
+configured while `railway.json` was still being read and still winning, which
+is why the changeover was uneventful — but it also means those first green
+checks proved the *file* worked, not the dashboard. The first deploy after the
+file was removed is what actually exercised these settings, and it was done on
+staging first for that reason.
 
 ---
 
@@ -214,10 +213,16 @@ For each environment:
 
 ---
 
-## Step 5 — delete `railway.json`
+## Step 5 — done: `railway.json` is gone
 
-Only once **both** environments have passed step 4. In its own commit, so it is
-trivial to revert if something was missed.
+The file was deleted once both environments had been configured and verified,
+and before 1 December rather than on it — so the changeover happened on a day
+somebody was watching, instead of silently at a deadline. The order mattered:
+deleting it first would have dropped the settings on the very next deploy.
+
+If a future deploy ever loses the pre-deploy step or the healthcheck, this page
+is the record of what those fields should contain — and `npm run verify:deploy`
+is how you find out before a school does.
 
 ---
 
