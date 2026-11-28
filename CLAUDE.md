@@ -229,8 +229,10 @@ are **copied into each school** at provisioning so a school can retune its own r
   and, with the healthcheck also unset, every broken deploy still reported success; `prisma db push`
   is never used against production.
 - **Railway's dashboard is authoritative for deploy settings; the repo only records them.**
-  `railway.json` was applied by pushing a commit, and stops being read on 1 December 2026. Its
-  replacement is not `.railway/railway.ts` — Railway does not read that during a deploy either, and
+  There used to be a `railway.json`, applied by pushing a commit; Railway stops reading it on
+  1 December 2026, so it was deleted ahead of that once the dashboard carried the settings. Its
+  replacement is not `.railway/railway.ts` — Railway does not read that during a deploy either,
+  and
   the Railway CLI is deliberately not used here (the account carries other organisations' work). The
   settings are entered by hand in the service, **per environment**, following
   [docs/railway-service-settings.md](docs/railway-service-settings.md).

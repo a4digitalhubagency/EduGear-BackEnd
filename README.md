@@ -430,18 +430,17 @@ says `APP_ENV=staging`. Anything else is refused. It is an allowlist rather than
 like production" check, because the first real connection string proved that useless — a Neon URL
 reads `…neon.tech/neondb`, which contains neither "prod" nor "live".
 
-> **Check the dashboard actually has these.** `railway.json` is valid, committed
-> and at the repo root, and Railway still did not read it on the first service —
-> **Settings → Deploy** showed no pre-deploy step and no healthcheck path. The
-> consequences were quiet and serious: migrations never ran, so production sat on
-> an empty database, and with no healthcheck Railway reported every deploy as
-> successful because it was only checking that the container started. If those
-> two fields are empty, set them by hand:
->
-> - Pre-deploy step: `npx prisma migrate deploy`
-> - Healthcheck Path: `/api/health`
+> **The dashboard is the configuration now.** There used to be a `railway.json`
+> at the repo root, and Railway did not read it on the first service — **Settings
+> → Deploy** showed no pre-deploy step and no healthcheck path. The consequences
+> were quiet and serious: migrations never ran, so production sat on an empty
+> database, and with no healthcheck Railway reported every deploy as successful
+> because it was only checking that the container started. Railway stopped
+> stops reading that file on 1 December 2026, so it was removed ahead of the
+> deadline; the settings are entered by hand, per environment, following
+> [docs/railway-service-settings.md](docs/railway-service-settings.md).
 
-[railway.json](railway.json) builds from the Dockerfile and sets three things
+The service builds from the Dockerfile. Four of the ten settings are the ones
 that matter:
 
 - `preDeployCommand: npx prisma migrate deploy` — migrations run **as a release
@@ -451,6 +450,16 @@ that matter:
   container that cannot reach its database never receives a request.
 - `restartPolicyType: ON_FAILURE` with 3 retries, so a crash loop stops instead
   of hammering the database.
+- **Pre-Deploy Timeout: 600 seconds.** Generous on purpose. Prisma wraps each
+  migration in a transaction, so a timeout rolls the SQL back cleanly — but it
+  leaves that migration marked *failed* in `_prisma_migrations`, and every later
+  deploy then refuses to start until somebody runs `prisma migrate resolve` by
+  hand against production.
+
+`.railway/railway.ts` is the typechecked record of all ten, compiled against
+Railway's own types by `npm run typecheck:railway`. It proves the field names
+are real; it does **not** prove they match what Railway is running. Change one
+in the dashboard, change it there too.
 
 Deployment is **Railway's own GitHub trigger with "Wait for CI" enabled** — a push to `main` deploys
 only after CI goes green. Without that toggle Railway deploys on push regardless of whether the tests
@@ -471,12 +480,18 @@ commit, and leaves both empty.
    `DIRECT_URL` is the unpooled connection, which migrations need.
    `PORT` is injected — do not set it.
 3. Generate `JWT_ACCESS_SECRET` with `openssl rand -base64 48`.
-4. Set `APP_VERSION` to `${{RAILWAY_GIT_COMMIT_SHA}}` so an error in Sentry names
-   the commit that caused it.
-5. On each environment, Settings → Deploy: set the **Pre-deploy Command** to
-   `npx prisma migrate deploy` and the **Healthcheck Path** to `/api/health`.
-   On production, enable **Wait for CI** on the GitHub trigger. Do not assume
-   `railway.json` supplies these — verify the fields are populated.
+4. **Leave `APP_VERSION` unset.** It is tempting to set it to
+   `${{RAILWAY_GIT_COMMIT_SHA}}`, and that is wrong: Railway's `${{…}}` syntax
+   addresses *other services'* variables, not the platform's own runtime ones,
+   so it expands silently to an empty string and every Sentry error goes out
+   with no release attached. Unset, `validateEnv` reads the platform variable
+   directly. `/api/health/live` reporting a real sha rather than `unset` is the
+   proof it worked.
+5. On each environment, enter all ten settings by hand following
+   [docs/railway-service-settings.md](docs/railway-service-settings.md).
+   Nothing carries across environments. On production, enable **Wait for CI**
+   on the GitHub trigger. Then prove it from outside rather than by reading the
+   page back: `npm run verify:deploy -- <url> <environment> <front-end origin>`.
 6. First deploy, then create the platform owner:
    `railway run npm run platform:grant -- ops@a4technologies.ng OWNER --create`
 
