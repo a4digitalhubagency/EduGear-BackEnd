@@ -37,6 +37,12 @@ export const TRUSTED_PROXY_HOPS = 2;
  * integration test exercises the same prefix, proxy handling and body limit
  * that production does rather than a hand-maintained copy of them.
  */
+/**
+ * Ten is Node's default and eleven is what this stack legitimately attaches;
+ * the headroom is for one more integration, not for an unbounded climb.
+ */
+const RESPONSE_MAX_LISTENERS = 15;
+
 export function applyHttpSettings(
   app: NestExpressApplication,
   apiPrefix: string,
@@ -56,4 +62,28 @@ export function applyHttpSettings(
     },
   });
   app.set('trust proxy', TRUSTED_PROXY_HOPS);
+
+  // Node warns once a single emitter passes ten listeners, and a response here
+  // carries eleven: the logger, the error handler, Sentry's instrumentation and
+  // the rest of the stack each attach one to know when the response finished.
+  //
+  // It is not the leak the warning is shaped to catch. A `ServerResponse` lives
+  // for one request and is collected with it, so the count is a constant, not a
+  // climb — it only crossed the line when Sentry was switched on, which is why
+  // it appeared in staging and production and never locally.
+  //
+  // Left alone it costs two lines of log per request, and that is the part
+  // worth fixing: Sentry here carries no breadcrumbs *on the grounds that* the
+  // context is in these logs under the same `requestId`. Burying that channel
+  // in a warning about a leak that is not happening undermines the one place
+  // anybody looks during an incident.
+  //
+  // Fifteen rather than `Infinity`, so an emitter that really does accumulate
+  // listeners still trips the warning and still gets investigated.
+  app.use(
+    (_request: IncomingMessage, response: ServerResponse, next: () => void) => {
+      response.setMaxListeners(RESPONSE_MAX_LISTENERS);
+      next();
+    },
+  );
 }

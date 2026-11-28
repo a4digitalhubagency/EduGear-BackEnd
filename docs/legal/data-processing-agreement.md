@@ -424,7 +424,7 @@ Technologies has carried out itself.
 
 | Sub-processor | Purpose | Location |
 | --- | --- | --- |
-| Neon | Database hosting | Outside Nigeria |
+| Neon | Database hosting | United States (AWS `us-east-2`) |
 | Railway | Application hosting | Outside Nigeria |
 | Cloudflare R2 | Storage of photographs and payment evidence | Distributed |
 | Paystack | Online payment processing | Nigeria |
