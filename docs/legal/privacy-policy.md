@@ -147,7 +147,7 @@ to process data only as needed to provide their service:
 
 | Provider | What they do | Where |
 | --- | --- | --- |
-| Neon | Hosts the database | Outside Nigeria |
+| Neon | Hosts the database | United States |
 | Railway | Runs the application servers | Outside Nigeria |
 | Cloudflare R2 | Stores uploaded photographs and payment evidence | Distributed |
 | Paystack | Processes online card and transfer payments | Nigeria |
