@@ -25,11 +25,14 @@ and Implementation Directive 2025** ("GAID").
 | | |
 | --- | --- |
 | Name | A4 Technologies |
-| RC number | `[TO CONFIRM]` |
-| Address | `[TO CONFIRM: registered office]` |
+| RC number | `[fill in before signing]` |
+| Address | `[fill in before signing]` |
 | Contact | edugearsupport@gmail.com |
-| Data Protection Officer | `[TO CONFIRM: name and contact]` |
-| NDPC registration no. | `[TO CONFIRM: once registered]` |
+
+A4 Technologies has not appointed a Data Protection Officer. Section 32 of the
+NDP Act requires one of a data controller or processor **of major importance**,
+a threshold A4 Technologies does not presently meet; clause 13 commits it to
+appointing one if it does, and to telling the School.
 
 ---
 
@@ -220,8 +223,12 @@ Each party shall maintain its registration with the Commission and, on request, 
 it. Article 34(2)(m) requires each party to ascertain the other's registration, and each is
 accountable under Article 34(3) for the third parties it engages.
 
-A4 Technologies files Compliance Audit Returns annually as required by Article 10 and will share
-the outcome with the School on request.
+A4 Technologies will register with the Commission and file Compliance Audit Returns as and when
+Article 10 requires it to, and will share the outcome with the School on request. It makes no
+claim to have done so yet, and the School should ask for evidence rather than assume it.
+
+A4 Technologies will appoint a Data Protection Officer if it becomes a controller or processor of
+major importance under section 32, and will notify the School of the appointment.
 
 ---
 
@@ -291,19 +298,18 @@ own breach of this DPA or of the NDP Act, to the extent of its own responsibilit
 Neither party indemnifies the other against a penalty imposed for the other's independent failure,
 such as the School's own registration obligation or A4 Technologies' own.
 
-`[TO CONFIRM: whether this indemnity is capped, and how it sits with the liability cap in clause 13
-of the Terms of Service — a commercial decision.]`
+This indemnity is subject to the limitation of liability in the Terms of Service, except that the
+limitation does not apply to a regulatory penalty imposed on one party because of the other's
+breach — which is the one loss a cap would make the indemnity worthless against.
 
 ---
 
 ## 15. Insurance — *Art 34(2)(r)*
 
-A4 Technologies shall maintain insurance appropriate to the nature and scale of the processing,
-including cover for cyber risk and data protection liability, and shall produce evidence on
-reasonable request.
-
-`[TO CONFIRM: Art 34(2)(r) makes insurance a mandatory clause. Confirm what cover exists, or obtain
-it — a school's lawyer will ask for the certificate.]`
+A4 Technologies shall obtain, before it begins processing personal data for the School under this
+Agreement, and thereafter maintain, insurance appropriate to the nature and scale of the
+processing, including cover for cyber risk and data protection liability. It shall produce
+evidence of that cover on reasonable request.
 
 ---
 
@@ -324,9 +330,9 @@ beyond 30 days, either party may terminate the Principal Agreement on written no
 The parties shall first attempt to resolve any dispute by negotiation between senior
 representatives within 30 days of written notice.
 
-Failing that, the dispute shall be referred to mediation in `[TO CONFIRM: Lagos]` under the rules
+Failing that, the dispute shall be referred to mediation in Lagos under the rules
 of the Lagos Multi-Door Courthouse, and failing settlement within a further 30 days, to the courts
-of `[TO CONFIRM: Lagos State]`.
+of Lagos State.
 
 Nothing here prevents either party seeking urgent injunctive relief, prevents a data subject
 complaining to the Commission under section 46(1), or prevents a data subject bringing a claim
@@ -381,8 +387,9 @@ password change, sign-out, role change, or suspension of the user, their members
 for the subjects and classes they are assigned to; a parent may see only their own children. No
 user may grant a permission they do not hold, and no user may change their own role.
 
-**Encryption.** All traffic is encrypted in transit using TLS. Data at rest is encrypted by the
-hosting and storage providers in Schedule 3.
+**Encryption.** All traffic is encrypted in transit using TLS, with HSTS set. Encryption at rest
+is provided by the hosting and storage providers in Schedule 3 and is described in their own
+documentation; A4 Technologies relies on it rather than applying a further layer of its own.
 
 **Uploads.** Files are validated by **reading their actual bytes**, not by trusting the declared
 file type. Size and type are restricted per purpose, filenames are sanitised, and storage keys
@@ -405,8 +412,11 @@ the bank, and the last four digits.
 **Change control.** Changes pass automated linting, type checking, unit and integration tests, and
 a production-mode boot check before release. Database migrations run as a gated release step.
 
-**Backups.** `[TO CONFIRM: state the backup frequency, retention and restore-test cadence once the
-Neon restore drill has been run.]`
+**Backups.** The database provider in Schedule 3 takes continuous backups and supports
+point-in-time recovery within the retention window of the plan in force. A4 Technologies does not
+yet claim a tested restore procedure: a restore has not been rehearsed, and until it has, the
+honest position is that recovery depends on the provider's mechanism rather than on a drill A4
+Technologies has carried out itself.
 
 ---
 
@@ -414,8 +424,8 @@ Neon restore drill has been run.]`
 
 | Sub-processor | Purpose | Location |
 | --- | --- | --- |
-| Neon | Database hosting | `[TO CONFIRM: region]` |
-| Railway | Application hosting | `[TO CONFIRM: region]` |
+| Neon | Database hosting | Outside Nigeria |
+| Railway | Application hosting | Outside Nigeria |
 | Cloudflare R2 | Storage of photographs and payment evidence | Distributed |
 | Paystack | Online payment processing | Nigeria |
 | Resend | Transactional email delivery | United States |
@@ -441,8 +451,9 @@ accountable for their acts and omissions under Article 34(3) of the GAID.
 | Data retained longer than necessary | Retention schedule; de-identification of residual records |
 | Breach not reported in time | 24-hour processor-to-controller notification under clause 7(g) |
 
-**Data Privacy Impact Assessment:** `[TO CONFIRM: pending — to be completed with the DPCO and
-appended here, per clause 13.]`
+**Data Privacy Impact Assessment:** not yet carried out. Section 28 requires one where processing
+is likely to result in high risk; A4 Technologies will commission one with a licensed DPCO before
+processing at scale, and will share its conclusions with the School on request.
 
 ---
 
