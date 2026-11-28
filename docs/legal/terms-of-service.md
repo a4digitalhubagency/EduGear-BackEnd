@@ -5,8 +5,8 @@
 These terms govern use of EduGear, a school management service operated by **A4 Technologies**
 ("we", "us"). They form an agreement between us and the school that subscribes ("the School").
 
-- **Address:** `[TO CONFIRM: registered office address]`
-- **RC number:** `[TO CONFIRM]`
+- **Address:** `[fill in before signing]`
+- **RC number:** `[fill in before signing]`
 - **Contact:** edugearsupport@gmail.com
 
 By subscribing to EduGear, or by using it, the School accepts these terms. If you are accepting on
@@ -116,11 +116,13 @@ users.** There is no impersonation feature, deliberately.
 
 The School pays a subscription fee for the Service, at the rate and interval agreed in writing.
 
-- Fees are `[TO CONFIRM: payable in advance / monthly / per session — set out the commercial terms]`.
+- Fees are **payable in advance** for each Subscription Period, on the invoice issued at its
+  start. The rate, the length of the period and any discount are whatever the written offer the
+  School accepted says they are; this clause governs only how payment works, not what it costs.
 - Fees are exclusive of VAT and other applicable taxes, which the School pays in addition.
 - We may change our prices for a renewal term on **at least 60 days' notice** before that term
   starts. Prices do not change during a term the School has already paid for.
-- If an invoice is more than `[TO CONFIRM: 30]` days overdue, we may suspend the Service after
+- If an invoice is more than **30** days overdue, we may suspend the Service after
   giving written notice and a reasonable chance to pay.
 
 ---
@@ -160,9 +162,11 @@ party to it and have no ability to reverse a settled payment.
 
 ## 8. Availability and support
 
-We aim to keep the Service available and we monitor it continuously, but we do not commit to a
-specific uptime percentage under these terms. `[TO CONFIRM: add an SLA here if one is offered
-commercially — an uptime figure, support hours and response targets.]`
+We aim to keep the Service available and we monitor it, but **these terms carry no uptime
+commitment, no support response target and no service credits.** That is deliberate rather than an
+omission: a figure we have not yet measured ourselves against would be a number invented for a
+contract. A school that needs a service level should ask for one in writing, and it will be agreed
+separately and specifically.
 
 Planned maintenance that is likely to interrupt the Service will be notified in advance where
 practicable, and scheduled outside school hours where we reasonably can.
@@ -199,7 +203,7 @@ access as soon as the cause is resolved.
 ## 11. Term, termination and getting your data out
 
 Either party may end this agreement at the end of a Subscription Period by giving at least
-`[TO CONFIRM: 30]` days' written notice. Either may end it immediately if the other commits a
+**30** days' written notice. Either may end it immediately if the other commits a
 material breach and fails to remedy it within 30 days of being asked to.
 
 **On termination, the School may export its data.** We will provide School Data in a structured,
@@ -235,7 +239,7 @@ Subject to that, and to the extent the law allows:
   loss of anticipated savings.
 - **Our total liability** arising out of or in connection with this agreement, in any twelve-month
   period, is limited to **the subscription fees the School paid us in the twelve months before the
-  claim arose.** `[TO CONFIRM: commercial decision — a larger school may negotiate this.]`
+  claim arose.**
 - The School remains responsible for its own obligations as data controller, including any penalty
   imposed on it for failures that are its own rather than ours.
 
@@ -284,7 +288,7 @@ whole agreement between us on this subject.
 **No waiver.** Not enforcing a right once does not waive it.
 
 **Governing law.** These terms are governed by the laws of the **Federal Republic of Nigeria**, and
-the courts of `[TO CONFIRM: Lagos State]` have jurisdiction, without preventing a data subject from
+the courts of Lagos State have jurisdiction, without preventing a data subject from
 bringing a claim where the NDP Act allows.
 
 **Notices.** To us: edugearsupport@gmail.com. To the School: the administrative contact on its account.
