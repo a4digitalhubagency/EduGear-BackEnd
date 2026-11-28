@@ -69,9 +69,11 @@ error can be reversed and a leaving certificate issued.
 **Indefinite by default**, because transcript requests arrive decades later and a school that
 destroyed the record cannot serve a former student. The school may instruct a shorter period.
 
-`[TO CONFIRM with counsel: whether any Nigerian statute or state education authority sets a minimum
-or maximum for school academic records. Indefinite retention of a minimised record is defensible
-under s.25(1)(b)(ii) and GAID ¶4(v), but a stated statutory period is stronger.]`
+**This rests on an assumption, stated here rather than buried.** No Nigerian statute or state
+education authority has been identified that sets a minimum or maximum retention for school
+academic records, and none has been confirmed by counsel. Indefinite retention of a *minimised*
+record is defensible under s.25(1)(b)(ii) and GAID ¶4(v) — but it is a defence, not a citation. If
+a period is later found to apply, this section changes to match it.
 
 ### 2.3 Academic data
 

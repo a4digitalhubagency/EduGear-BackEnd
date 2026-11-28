@@ -7,10 +7,9 @@ It is written to meet section 27 of the Nigeria Data Protection Act 2023 ("the N
 
 EduGear is operated by **A4 Technologies** ("we", "us").
 
-- **Address:** `[TO CONFIRM: registered office address]`
-- **RC number:** `[TO CONFIRM]`
+- **Address:** `[fill in before publishing]`
+- **RC number:** `[fill in before publishing]`
 - **Contact for everything, including data protection:** edugearsupport@gmail.com
-- **Data Protection Officer:** `[TO CONFIRM: name and contact once the DPO is appointed]`
 
 ---
 
@@ -148,8 +147,8 @@ to process data only as needed to provide their service:
 
 | Provider | What they do | Where |
 | --- | --- | --- |
-| Neon | Hosts the database | `[TO CONFIRM: region]` |
-| Railway | Runs the application servers | `[TO CONFIRM: region]` |
+| Neon | Hosts the database | Outside Nigeria |
+| Railway | Runs the application servers | Outside Nigeria |
 | Cloudflare R2 | Stores uploaded photographs and payment evidence | Distributed |
 | Paystack | Processes online card and transfer payments | Nigeria |
 | Resend | Sends transactional email | United States |
