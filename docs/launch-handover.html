@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EduGear — what is left before launch</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 14mm 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 9.6pt; line-height: 1.42; color: #1b1f24; margin: 0;
+  }
+  h1 { font-size: 19pt; margin: 0 0 2pt; letter-spacing: -0.3pt; }
+  .sub { color: #5b6670; font-size: 9pt; margin-bottom: 10pt; }
+  h2 {
+    font-size: 11pt; margin: 10pt 0 4pt; padding-bottom: 3pt;
+    border-bottom: 1.6pt solid #1b1f24; letter-spacing: -0.2pt;
+  }
+  h2 .n {
+    display: inline-block; background: #1b1f24; color: #fff;
+    width: 16pt; height: 16pt; line-height: 16pt; text-align: center;
+    border-radius: 3pt; font-size: 9pt; margin-right: 6pt;
+  }
+  h3 { font-size: 9.6pt; margin: 8pt 0 3pt; color: #30363d; }
+  p { margin: 0 0 4pt; }
+  code {
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    font-size: 8.5pt; background: #f2f4f6; padding: 0.5pt 2.5pt;
+    border-radius: 2pt; color: #0b3d62;
+  }
+  pre {
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    font-size: 8.1pt; background: #f7f8fa; border-left: 2.5pt solid #c3cbd4;
+    padding: 4.5pt 7pt; margin: 3pt 0 5pt; white-space: pre-wrap; line-height: 1.35;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 3pt 0 5pt; font-size: 8.6pt; }
+  th {
+    text-align: left; background: #f2f4f6; padding: 3.5pt 5pt;
+    border-bottom: 1pt solid #c3cbd4; font-size: 8.4pt;
+  }
+  td { padding: 3pt 5pt; border-bottom: 0.4pt solid #eceff1; vertical-align: top; }
+  .warn { background: #fff6e5; border-left: 2.5pt solid #d98500; padding: 5pt 8pt; margin: 6pt 0; font-size: 8.8pt; }
+  .note { background: #eef4fb; border-left: 2.5pt solid #2d6fb3; padding: 5pt 8pt; margin: 6pt 0; font-size: 8.8pt; }
+  .good { background: #e8f5ec; border-left: 2.5pt solid #11643c; padding: 5pt 8pt; margin: 6pt 0; font-size: 8.8pt; }
+  .who {
+    display: inline-block; font-size: 7.6pt; font-weight: bold; letter-spacing: 0.3pt;
+    padding: 1pt 5pt; border-radius: 2.5pt; margin-left: 5pt; vertical-align: 2pt;
+  }
+  .ahmad { background: #e4edf7; color: #1d4e85; }
+  .adewale { background: #f3e9f7; color: #6b2d85; }
+  .tag {
+    display: inline-block; font-size: 7.6pt; font-weight: bold; letter-spacing: 0.3pt;
+    padding: 1pt 5pt; border-radius: 2.5pt; margin-left: 4pt; vertical-align: 2pt;
+  }
+  .block { background: #fbe4e4; color: #8a2b2b; }
+  .soon  { background: #fff1d9; color: #8a5000; }
+  .later { background: #eceff1; color: #4a5660; }
+  ol.steps { margin: 0 0 5pt; padding-left: 15pt; }
+  ol.steps li { margin-bottom: 3pt; }
+  ul.check { list-style: none; padding: 0; margin: 0 0 5pt; }
+  ul.check li { padding: 3pt 0 3pt 15pt; border-bottom: 0.4pt solid #eceff1; position: relative; }
+  ul.check li:before {
+    content: "☐"; position: absolute; left: 0; top: 2.5pt; font-size: 10pt; color: #8d99a4;
+  }
+  ul.check li:last-child { border-bottom: none; }
+  .foot { margin-top: 12pt; padding-top: 5pt; border-top: 0.6pt solid #d7dde3;
+          color: #5b6670; font-size: 8pt; }
+</style>
+</head>
+<body>
+
+<h1>EduGear — what is left before launch</h1>
+<p class="sub">For Ahmad and Adewale · 28 November 2026</p>
+
+<div class="good">
+<strong>The system is built, deployed and working.</strong> The live service at
+<code>api.edugear.ng</code> is healthy, running the latest code, with its
+database and cache connected. The staging copy is the same. Everything that can
+be checked automatically passes.
+<br><br>
+What is left is <strong>one thing that stops schools using it</strong>, two
+security jobs for today, and some paperwork that stops you signing a contract
+but does not stop the product running.
+</div>
+
+<h2><span class="n">1</span>Email does not send<span class="who ahmad">Ahmad</span><span class="tag block">BLOCKS LAUNCH</span></h2>
+
+<p><strong>In plain terms:</strong> right now EduGear sends no email at all. No
+staff invitations, no password resets, and no parent can be invited to the
+portal. A school would see "invited" on screen and the person would simply
+never receive anything.</p>
+
+<p class="warn"><strong>It fails quietly, which is the dangerous part.</strong>
+Nothing shows an error. Because inviting a parent now requires the inviting
+staff member to have confirmed their own email first, a broken email system
+shows up as a confusing "you don't have permission" message instead of
+"email is broken".</p>
+
+<h3>Why it broke</h3>
+<p>The Resend account was moved from A4's account to the one under
+<code>edugearsupport@gmail.com</code>. The settings currently published on the
+<code>edugear.ng</code> domain were issued by the <em>old</em> account, so the
+new account does not recognise the domain and refuses to send.</p>
+
+<h3>What to do</h3>
+<ol class="steps">
+  <li>Sign in to Resend as <code>edugearsupport@gmail.com</code>, go to
+      <strong>Domains</strong>, and add <code>edugear.ng</code>.</li>
+  <li>Resend will show you a set of DNS records to add. <strong>One of them,
+      called <code>resend._domainkey</code>, will be different from the one
+      already there.</strong></li>
+  <li>In the DNS settings for <code>edugear.ng</code>, <strong>replace</strong>
+      the old <code>resend._domainkey</code> record with the new one.
+      <em>Do not add a second one next to it</em> — two of these on the same
+      name cancel each other out and email stays broken.</li>
+  <li>If <code>edugear.ng</code> is still listed on the old A4 Resend account,
+      remove it there first.</li>
+  <li>Back in Resend, click <strong>Verify DNS Records</strong>. It usually
+      passes within minutes.</li>
+  <li>Create a new <strong>API key on this account</strong>, and put it in
+      Railway → production → Variables as <code>RESEND_API_KEY</code>.
+      A key from the old account will not work even after the domain
+      verifies.</li>
+  <li>Redeploy.</li>
+</ol>
+
+<h3>How to know it worked</h3>
+<pre>curl -s -X POST https://api.edugear.ng/api/auth/register-school \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "schoolName":"Email Test School",
+    "schoolEmail":"edugearsupport+testschool@gmail.com",
+    "firstName":"Test","lastName":"Owner",
+    "email":"edugearsupport+testowner@gmail.com",
+    "password":"Kalabari-Mangrove-77!",
+    "phone":"08031234567"
+  }'</pre>
+
+<p>A <code>201</code> response means the school was created. Then check the
+<code>edugearsupport@gmail.com</code> inbox — anything with a <code>+</code> in
+it lands in the same place — for a message with a "verify your email" link.
+<strong>Check the spam folder</strong>: a newly set up sending domain often
+lands there on the very first message.</p>
+
+<p class="note"><strong>If no email arrives:</strong> open the
+<strong>Emails</strong> tab in Resend. If your test is listed there, the email
+left EduGear and the problem is delivery. If nothing is listed, EduGear never
+reached Resend — which means the API key is still the old one.</p>
+
+<h3>Afterwards</h3>
+<p>Sign in to the admin console as <code>edugearsupport@gmail.com</code>, find
+"Email Test School", and <strong>purge</strong> it. Cancelling only marks it
+cancelled; purging removes it properly, and asks you to type the school name to
+confirm because it cannot be undone.</p>
+
+<h2><span class="n">2</span>Two security jobs<span class="who ahmad">Ahmad</span><span class="tag soon">TODAY</span></h2>
+
+<h3>Change the database password</h3>
+<p>The production database password was shown on screen several times while
+fixing a connection problem, so it should be treated as known. That database
+can be reached from the public internet.</p>
+<ul class="check">
+  <li>Neon → your project → <strong>Roles</strong> → reset the password for
+      <code>neondb_owner</code></li>
+  <li>Update <strong>both</strong> <code>DATABASE_URL</code> and
+      <code>DIRECT_URL</code> in Railway → production</li>
+  <li>Redeploy, then run the check at the bottom of this page</li>
+</ul>
+
+<p class="warn"><strong>When pasting the new string into Railway, delete
+<code>&amp;channel_binding=require</code> from the end of it.</strong> Neon
+includes it by default and EduGear cannot use it. Production works today
+precisely because it is not there.</p>
+
+<h3>Change the admin console password</h3>
+<p>The first one was generated during setup and has been handled a few times.
+Changing it signs out every other session immediately.</p>
+
+<h2><span class="n">3</span>Company registration<span class="who adewale">Adewale</span><span class="tag soon">BEFORE SIGNING</span></h2>
+
+<p>The three legal documents have two blanks left, appearing in six places:
+the <strong>RC number</strong> and the <strong>registered office address</strong>.
+Both come from CAC registration, which has not been done.</p>
+
+<p><strong>This does not stop the product working.</strong> A school can use
+EduGear today. What it stops is signing a data processing agreement, because
+without registration there is no company to name as the party signing it — and
+a school's lawyer will ask for the RC number.</p>
+
+<p>It also affects registering with the Nigeria Data Protection Commission,
+which identifies a business by its registration.</p>
+
+<h3>Three ways forward — pick one</h3>
+<table>
+  <tr><th>Option</th><th>What it means</th></tr>
+  <tr><td><strong>Register with CAC</strong></td>
+      <td>Cleanest. Fill the six fields and the documents are finished.</td></tr>
+  <tr><td><strong>Sign as the business as it exists today</strong></td>
+      <td>A business name registration, or the owner personally. The documents
+          then say what is actually true.</td></tr>
+  <tr><td><strong>Hold the documents</strong></td>
+      <td>Start pilot schools on a simpler written agreement, and finish these
+          once CAC is done.</td></tr>
+</table>
+
+<p class="warn"><strong>Do not put in a placeholder RC number.</strong> These
+documents were deliberately written so that every statement in them can be
+proved. The registration number is the first thing a lawyer checks, and an
+invented one undoes the credibility of everything else.</p>
+
+<h2><span class="n">4</span>Insurance<span class="who adewale">Adewale</span><span class="tag soon">BEFORE SIGNING</span></h2>
+
+<p>The processing agreement commits A4 to having cyber and data-protection
+insurance <strong>before handling any school's data</strong>. Nigerian data
+protection rules make an insurance clause compulsory, so it cannot simply be
+removed from the document.</p>
+
+<p>As written it is a promise with a deadline attached, which is honest — but it
+becomes binding the moment a school signs. Either the cover needs to exist, or
+the school needs to be told it does not.</p>
+
+<h2><span class="n">5</span>Everything else can wait<span class="tag later">NOT BLOCKING</span></h2>
+
+<table>
+  <tr><th>Item</th><th>Who</th><th>Why it can wait</th></tr>
+  <tr><td>Paystack live keys</td><td>Adewale</td>
+      <td>Only affects card payments. Cash and bank transfer work today and are fully tested.</td></tr>
+  <tr><td>NDPC registration and privacy impact assessment</td><td>Adewale</td>
+      <td>Required by law and slow to arrange, but no school checks on day one. Worth starting now.</td></tr>
+  <tr><td>Error alerts</td><td>Ahmad</td>
+      <td>Errors are being recorded, but nothing notifies anyone yet.</td></tr>
+  <tr><td>Uptime monitoring</td><td>Ahmad</td>
+      <td>Nothing currently tells you if the site goes down at 2am.</td></tr>
+  <tr><td>Practise a database restore</td><td>Ahmad</td>
+      <td>Backups exist but have never been restored. A backup nobody has tested is not yet a backup.</td></tr>
+  <tr><td>Two-step login for the admin console</td><td>Adewale to decide</td>
+      <td>That console can suspend any school. Designed but not built.</td></tr>
+  <tr><td>Four unknown accounts in the live database</td><td>Ahmad</td>
+      <td>Present before launch, probably from testing. Worth identifying before real schools arrive.</td></tr>
+</table>
+
+<h2><span class="n">6</span>How to check everything is still fine</h2>
+
+<pre>npm run verify:deploy -- https://api.edugear.ng production https://www.edugear.ng</pre>
+
+<p>Eleven checks, takes seconds, changes nothing and needs no password. It asks
+the live service what it actually believes rather than reading a settings page
+back at you. Run it after any change to Railway settings.</p>
+
+<h2><span class="n">7</span>Things that will waste a day if nobody warns you</h2>
+
+<table>
+  <tr><th>Symptom</th><th>What it usually means</th></tr>
+  <tr><td>"Can't reach database server"</td>
+      <td>Almost anything. During setup this one message stood for a typing
+          mistake, a wrong password, and a broken network setting. Test the
+          connection with <code>psql</code> first — it reports the real reason.</td></tr>
+  <tr><td>A command hangs about five seconds, then says the database is unreachable</td>
+      <td>The computer's IPv6 networking is advertised but does not work. Other
+          tools quietly fall back; EduGear's database layer does not.</td></tr>
+  <tr><td>An <code>npm run</code> command ignores your options</td>
+      <td>Put <code>--</code> before them: <code>npm run thing -- --option</code>.</td></tr>
+  <tr><td>A Railway setting seems to have disappeared</td>
+      <td>Settings do not carry between staging and production. Each is set up
+          separately. See <code>docs/railway-service-settings.md</code>.</td></tr>
+</table>
+
+<p class="foot">Technical detail for every item here lives in
+<code>docs/launch-handover.md</code> in the repository, alongside
+<code>docs/railway-service-settings.md</code> and the four legal documents in
+<code>docs/legal/</code>.</p>
+
+</body>
+</html>
